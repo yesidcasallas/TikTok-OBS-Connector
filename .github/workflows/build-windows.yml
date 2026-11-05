@@ -1,0 +1,52 @@
+name: Compilar para Windows
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Instalar dependencias del frontend
+        run: npm ci
+
+      - name: Pruebas del frontend
+        run: npm test
+
+      - name: Pruebas de Rust
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Compilar instalador (NSIS)
+        run: npx tauri build
+
+      - name: Preparar dist/installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/installer | Out-Null
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName dist/installer/TikTok-OBS-Connector-Setup.exe
+          Get-FileHash dist/installer/*.exe -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TikTok-OBS-Connector-Setup
+          path: dist/installer/
+          if-no-files-found: error
