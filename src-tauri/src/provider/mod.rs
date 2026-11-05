@@ -6,6 +6,7 @@
 
 pub mod access_pages;
 pub mod streamlabs;
+pub mod tiktok_login_kit;
 
 use crate::auth::CallbackInterpreter;
 use crate::error::AppResult;
