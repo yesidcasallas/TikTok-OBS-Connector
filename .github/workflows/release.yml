@@ -6,8 +6,12 @@
 # La release solo deja de ser borrador si TODAS las compilaciones terminan bien.
 # Las versiones con sufijo (`-beta.N`, `-rc.N`…) se publican como Pre-release.
 #
-# Lanzamiento manual (workflow_dispatch) = ensayo: verifica y compila todo,
-# sube los paquetes como artefactos del workflow y NO publica nada.
+# Lanzamiento manual (Actions → Release → Run workflow):
+#   - sin `tag`: ensayo. Verifica y compila todo, sube los paquetes como
+#     artefactos del workflow y NO publica nada.
+#   - con `tag` (etiqueta ya existente): compila el código de esa etiqueta y
+#     completa su release. Sirve para retomar una publicación interrumpida;
+#     solo reutiliza un BORRADOR vacío, nunca una release publicada.
 #
 # Notas: si existe `.github/releases/<etiqueta>.md`, su primera línea es el
 # título y el resto la descripción; si no, se generan automáticamente.
@@ -17,13 +21,18 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Etiqueta existente a publicar (vacío = ensayo sin publicar)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -31,6 +40,8 @@ env:
   NODE_VERSION: "22"
   CARGO_TERM_COLOR: always
   ASSET_PATTERN: "TikTok-OBS-Connector_[version]_[platform]_[arch][setup][ext]"
+  # Etiqueta a publicar: la subida (push) o la indicada a mano. Vacía = ensayo.
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
 
 jobs:
   verify:
@@ -40,6 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Dependencias del sistema (Tauri en Linux)
@@ -62,15 +74,15 @@ jobs:
           workspaces: src-tauri
 
       - name: Versión coherente con la etiqueta
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${RELEASE_TAG#v}"
           for file in package.json src-tauri/tauri.conf.json; do
             v="$(node -p "require('./$file').version")"
-            if [ "$v" != "$tag" ]; then echo "::error file=$file::La versión $v no coincide con la etiqueta $GITHUB_REF_NAME"; exit 1; fi
+            if [ "$v" != "$tag" ]; then echo "::error file=$file::La versión $v no coincide con la etiqueta $RELEASE_TAG"; exit 1; fi
           done
           v="$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)"
-          if [ "$v" != "$tag" ]; then echo "::error file=src-tauri/Cargo.toml::La versión $v no coincide con la etiqueta $GITHUB_REF_NAME"; exit 1; fi
+          if [ "$v" != "$tag" ]; then echo "::error file=src-tauri/Cargo.toml::La versión $v no coincide con la etiqueta $RELEASE_TAG"; exit 1; fi
 
       - name: Instalar dependencias del frontend
         run: npm ci
@@ -94,7 +106,7 @@ jobs:
 
   create-release:
     name: Crear release (borrador)
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.tag != '' }}
     needs: verify
     runs-on: ubuntu-22.04
     timeout-minutes: 10
@@ -105,37 +117,54 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
 
-      - name: Crear borrador (sin sobrescribir releases existentes)
+      - name: Crear borrador o reutilizar uno vacío (nunca una release publicada)
         id: create
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$TAG\") | .id")"
-          if [ -n "$existing" ]; then
-            echo "::error::Ya existe una release (o borrador) para $TAG. No se sobrescribe."
-            exit 1
-          fi
+          api="repos/$GITHUB_REPOSITORY/releases"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.ref' > /dev/null \
+            || { echo "::error::La etiqueta $TAG no existe en el repositorio."; exit 1; }
+
           notes=".github/releases/$TAG.md"
-          extra=()
+          generate=false
           if [ -f "$notes" ]; then
             title="$(head -n1 "$notes" | sed 's/^#[[:space:]]*//')"
             tail -n +2 "$notes" > body.md
           else
             title="$TAG"
             : > body.md
-            extra=(--generate-notes)
+            generate=true
           fi
-          pre=()
-          case "$TAG" in *-*) pre=(--prerelease) ;; esac
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-            --title "$title" --notes-file body.md "${pre[@]}" "${extra[@]}"
-          id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -n1)"
+          prerelease=false
+          case "$TAG" in *-*) prerelease=true ;; esac
+
+          existing="$(gh api "$api" --paginate --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft) \(.assets | length)\"" | head -n1)"
+          if [ -n "$existing" ]; then
+            read -r id draft assets <<< "$existing"
+            if [ "$draft" != "true" ]; then
+              echo "::error::La release de $TAG ya está publicada. No se sobrescribe."
+              exit 1
+            fi
+            if [ "$assets" != "0" ]; then
+              echo "::error::El borrador de $TAG ya tiene $assets archivos. Revísalo o bórralo a mano antes de reintentar."
+              exit 1
+            fi
+            echo "Se reutiliza el borrador vacío $id de un intento anterior."
+            gh api --method PATCH "$api/$id" -f name="$title" -F body=@body.md -F prerelease="$prerelease" --jq '.id' > /dev/null
+          else
+            # La API devuelve el id en la misma respuesta (sin depender del listado).
+            id="$(gh api --method POST "$api" -f tag_name="$TAG" -f name="$title" -F body=@body.md \
+              -F draft=true -F prerelease="$prerelease" -F generate_release_notes="$generate" --jq '.id')"
+          fi
           test -n "$id"
           echo "release_id=$id" >> "$GITHUB_OUTPUT"
+          echo "Borrador listo: $id (prerelease=$prerelease)"
 
   build:
     name: Compilar (${{ matrix.name }})
@@ -168,6 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Dependencias del sistema (Linux)
@@ -204,13 +234,13 @@ jobs:
           releaseAssetNamePattern: ${{ env.ASSET_PATTERN }}
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
-          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
+          uploadWorkflowArtifacts: ${{ env.RELEASE_TAG == '' }}
           retryAttempts: 1
 
   publish:
     name: Checksums y publicación
     needs: [create-release, build]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ needs.create-release.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     permissions:
@@ -219,7 +249,7 @@ jobs:
       - name: Descargar archivos, generar SHA256SUMS.txt y publicar
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.RELEASE_TAG }}
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         run: |
           set -euo pipefail
