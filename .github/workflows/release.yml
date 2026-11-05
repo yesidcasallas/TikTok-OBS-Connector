@@ -39,7 +39,7 @@ env:
   RUST_TOOLCHAIN: "1.98.1"
   NODE_VERSION: "22"
   CARGO_TERM_COLOR: always
-  ASSET_PATTERN: "TikTok-OBS-Connector_[version]_[platform]_[arch][setup][ext]"
+  ASSET_PATTERN: "Virelo_[version]_[platform]_[arch][setup][ext]"
   # Etiqueta a publicar: la subida (push) o la indicada a mano. Vacía = ensayo.
   RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
 
@@ -156,7 +156,9 @@ jobs:
               exit 1
             fi
             echo "Se reutiliza el borrador vacío $id de un intento anterior."
-            gh api --method PATCH "$api/$id" -f name="$title" -F body=@body.md -F prerelease="$prerelease" --jq '.id' > /dev/null
+            # tag_name explícito: sin él, GitHub deja el borrador como «untagged-…».
+            gh api --method PATCH "$api/$id" -f tag_name="$TAG" -f name="$title" -F body=@body.md \
+              -F prerelease="$prerelease" --jq '.id' > /dev/null
           else
             # La API devuelve el id en la misma respuesta (sin depender del listado).
             id="$(gh api --method POST "$api" -f tag_name="$TAG" -f name="$title" -F body=@body.md \
@@ -279,5 +281,16 @@ jobs:
 
           prerelease=false
           case "$TAG" in *-*) prerelease=true ;; esac
-          gh api --method PATCH "$api/$RELEASE_ID" -F draft=false -F prerelease="$prerelease" \
+          # tag_name explícito: en v0.1.0-beta.1 la release quedó publicada como
+          # «untagged-…» porque la edición no lo incluía.
+          gh api --method PATCH "$api/$RELEASE_ID" -f tag_name="$TAG" -F draft=false -F prerelease="$prerelease" \
             --jq '"Publicada: \(.html_url) · prerelease=\(.prerelease)"'
+
+          # Verificación final: la release debe responder por su etiqueta.
+          found="$(gh api "$api/tags/$TAG" --jq '"\(.id) \(.draft) \(.prerelease) \(.assets | length)"')"
+          read -r fid fdraft fpre fassets <<< "$found"
+          if [ "$fid" != "$RELEASE_ID" ] || [ "$fdraft" != "false" ] || [ "$fpre" != "$prerelease" ]; then
+            echo "::error::La release no quedó asociada a $TAG como se esperaba ($found)."
+            exit 1
+          fi
+          echo "Verificada por etiqueta: $TAG · $fassets archivos"
