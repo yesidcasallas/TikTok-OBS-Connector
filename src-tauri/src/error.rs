@@ -39,7 +39,9 @@ pub enum AppError {
     #[error("No se pudo preparar el retorno local del inicio de sesión: {0}")]
     AuthServer(String),
 
-    #[error("La sesión de Streamlabs no es válida o ha caducado (HTTP 401). Vuelve a iniciar sesión.")]
+    #[error(
+        "La sesión de Streamlabs no es válida o ha caducado (HTTP 401). Vuelve a iniciar sesión."
+    )]
     TokenInvalid,
 
     /// Solo cuando el proveedor envía un código explícito de falta de permiso.
@@ -48,12 +50,17 @@ pub enum AppError {
 
     /// HTTP 403 con JSON pero sin código explícito: no se sabe la causa.
     #[error("Streamlabs no autorizó la solicitud (HTTP {status}). No indica el motivo: puede deberse a que la cuenta no tiene acceso a LIVE desde PC, a una suspensión o a una restricción temporal.")]
-    ProviderForbidden { status: u16, message: Option<String> },
+    ProviderForbidden {
+        status: u16,
+        message: Option<String>,
+    },
 
     #[error("Streamlabs respondió HTTP 422 al crear el LIVE. Streamlabs Desktop asocia este código a una cuenta con restricciones para emitir; confírmalo en TikTok LIVE Center.")]
     AccountRestricted { message: Option<String> },
 
-    #[error("TikTok indica que ya hay un LIVE activo en esta cuenta. Finalízalo antes de crear otro.")]
+    #[error(
+        "TikTok indica que ya hay un LIVE activo en esta cuenta. Finalízalo antes de crear otro."
+    )]
     AlreadyLive,
 
     #[error("Streamlabs limita la frecuencia de solicitudes (HTTP 429). Espera unos minutos.")]
@@ -63,10 +70,16 @@ pub enum AppError {
     ProviderBlocked { status: u16, detail: String },
 
     #[error("Streamlabs rechazó la solicitud (HTTP {status}).")]
-    ProviderRejected { status: u16, message: Option<String> },
+    ProviderRejected {
+        status: u16,
+        message: Option<String>,
+    },
 
     #[error("Streamlabs devolvió un error de servidor (HTTP {status}). Inténtalo más tarde.")]
-    ProviderUnavailable { status: u16, message: Option<String> },
+    ProviderUnavailable {
+        status: u16,
+        message: Option<String>,
+    },
 
     #[error("Respuesta inesperada de Streamlabs: {0}.")]
     ProviderUnexpected(String),
@@ -86,7 +99,9 @@ pub enum AppError {
     #[error("No hay ningún LIVE activo creado desde esta aplicación.")]
     NoActiveStream,
 
-    #[error("Ya hay un LIVE activo creado desde esta aplicación. Finalízalo antes de solicitar otro.")]
+    #[error(
+        "Ya hay un LIVE activo creado desde esta aplicación. Finalízalo antes de solicitar otro."
+    )]
     StreamAlreadyCreated,
 
     #[error("Hay un LIVE activo. Finalízalo antes de cerrar la sesión; sin sesión no podrás finalizarlo desde aquí.")]
@@ -156,15 +171,17 @@ impl AppError {
             | AppError::ProviderForbidden { .. }
             | AppError::AccountRestricted { .. }
             | AppError::ProviderBlocked { .. } => "authorization",
-            AppError::ProviderRejected { status, .. } if (400..500).contains(status) => "validation",
+            AppError::ProviderRejected { status, .. } if (400..500).contains(status) => {
+                "validation"
+            }
             AppError::ProviderRejected { .. } | AppError::AlreadyLive => "provider",
             AppError::RateLimited => "rate_limit",
             AppError::ProviderUnavailable { .. } => "server",
             AppError::ProviderUnexpected(_) => "unexpected",
             AppError::Network(_) => "network",
-            AppError::AccessCheckInProgress | AppError::LiveNotAvailable(_) | AppError::AccessUnconfirmed(_) => {
-                "access"
-            }
+            AppError::AccessCheckInProgress
+            | AppError::LiveNotAvailable(_)
+            | AppError::AccessUnconfirmed(_) => "access",
             _ => "app",
         }
     }
@@ -249,18 +266,48 @@ mod tests {
         assert_eq!(json["httpStatus"], 403);
         assert_eq!(json["detail"], "Unable to go live. Please try again later");
         // La explicación no afirma una causa concreta.
-        assert!(json["message"].as_str().unwrap().contains("No indica el motivo"));
+        assert!(json["message"]
+            .as_str()
+            .unwrap()
+            .contains("No indica el motivo"));
     }
 
     #[test]
     fn categories_distinguish_error_kinds() {
         assert_eq!(AppError::TokenInvalid.category(), "auth");
-        assert_eq!(AppError::PermissionDenied { message: None }.category(), "authorization");
-        assert_eq!(AppError::ProviderRejected { status: 400, message: None }.category(), "validation");
-        assert_eq!(AppError::ProviderRejected { status: 200, message: None }.category(), "provider");
+        assert_eq!(
+            AppError::PermissionDenied { message: None }.category(),
+            "authorization"
+        );
+        assert_eq!(
+            AppError::ProviderRejected {
+                status: 400,
+                message: None
+            }
+            .category(),
+            "validation"
+        );
+        assert_eq!(
+            AppError::ProviderRejected {
+                status: 200,
+                message: None
+            }
+            .category(),
+            "provider"
+        );
         assert_eq!(AppError::RateLimited.category(), "rate_limit");
-        assert_eq!(AppError::ProviderUnavailable { status: 502, message: None }.category(), "server");
-        assert_eq!(AppError::ProviderUnexpected("x".into()).category(), "unexpected");
+        assert_eq!(
+            AppError::ProviderUnavailable {
+                status: 502,
+                message: None
+            }
+            .category(),
+            "server"
+        );
+        assert_eq!(
+            AppError::ProviderUnexpected("x".into()).category(),
+            "unexpected"
+        );
         assert_eq!(AppError::Network("x".into()).category(), "network");
         assert_eq!(AppError::AccessUnconfirmed("x".into()).category(), "access");
     }

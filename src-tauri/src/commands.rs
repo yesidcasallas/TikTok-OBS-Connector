@@ -28,7 +28,9 @@ pub async fn auth_login(app: AppHandle, core: Core<'_>) -> AppResult<Snapshot> {
     let result = core.login().await;
     if !matches!(
         result,
-        Err(AppError::AuthCancelled) | Err(AppError::AuthInProgress) | Err(AppError::AlreadyLoggedIn)
+        Err(AppError::AuthCancelled)
+            | Err(AppError::AuthInProgress)
+            | Err(AppError::AlreadyLoggedIn)
     ) {
         focus_main_window(&app);
     }

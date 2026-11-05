@@ -27,9 +27,11 @@ struct FakeBrowser {
 impl UrlOpener for FakeBrowser {
     fn open(&self, url: &str) -> bool {
         self.opened.lock().unwrap().push(url.to_string());
-        let port = url::Url::parse(url)
-            .ok()
-            .and_then(|u| u.query_pairs().find(|(k, _)| k == "port").map(|(_, v)| v.to_string()));
+        let port = url::Url::parse(url).ok().and_then(|u| {
+            u.query_pairs()
+                .find(|(k, _)| k == "port")
+                .map(|(_, v)| v.to_string())
+        });
         if let (Some(q), Some(port)) = (self.query.clone(), port) {
             let port: u16 = port.parse().unwrap();
             std::thread::spawn(move || {
@@ -75,7 +77,10 @@ impl Env {
             server: MockServer::start().await,
             store: Arc::new(MemoryStore::default()),
             dir: temp_dir(),
-            browser: Arc::new(FakeBrowser { query: Some("success=true&code=abc".into()), opened: Mutex::new(vec![]) }),
+            browser: Arc::new(FakeBrowser {
+                query: Some("success=true&code=abc".into()),
+                opened: Mutex::new(vec![]),
+            }),
         }
     }
 
@@ -97,7 +102,10 @@ impl Env {
 
     fn core_callback(&self, query: Option<&str>, timeout: Duration) -> Arc<AppCore> {
         self.core_with(
-            Arc::new(FakeBrowser { query: query.map(str::to_string), opened: Mutex::new(vec![]) }),
+            Arc::new(FakeBrowser {
+                query: query.map(str::to_string),
+                opened: Mutex::new(vec![]),
+            }),
             timeout,
         )
     }
@@ -163,7 +171,10 @@ impl Drop for Env {
 fn request() -> StartLiveRequest {
     StartLiveRequest {
         title: "  Mi directo  ".into(),
-        category: Category { id: "1".into(), name: "Juego".into() },
+        category: Category {
+            id: "1".into(),
+            name: "Juego".into(),
+        },
         audience_type: "0".into(),
     }
 }
@@ -177,14 +188,35 @@ fn availability(core: &AppCore) -> Availability {
 
 fn assert_no_secrets(core: &AppCore) {
     let snapshot = serde_json::to_string(&core.snapshot()).unwrap();
-    assert!(!snapshot.contains(TOKEN), "el token no debe salir en la instantánea");
-    assert!(!snapshot.contains(KEY), "la clave no debe salir en la instantánea");
+    assert!(
+        !snapshot.contains(TOKEN),
+        "el token no debe salir en la instantánea"
+    );
+    assert!(
+        !snapshot.contains(KEY),
+        "la clave no debe salir en la instantánea"
+    );
     let diag = core.diagnostics_text();
-    assert!(!diag.contains(TOKEN) && !diag.contains(KEY), "diagnóstico con secretos");
+    assert!(
+        !diag.contains(TOKEN) && !diag.contains(KEY),
+        "diagnóstico con secretos"
+    );
     for e in core.log().entries() {
-        assert!(!e.message.contains(TOKEN), "token en el registro: {}", e.message);
-        assert!(!e.message.contains(KEY), "clave en el registro: {}", e.message);
-        assert!(!e.message.contains("code=abc"), "código en el registro: {}", e.message);
+        assert!(
+            !e.message.contains(TOKEN),
+            "token en el registro: {}",
+            e.message
+        );
+        assert!(
+            !e.message.contains(KEY),
+            "clave en el registro: {}",
+            e.message
+        );
+        assert!(
+            !e.message.contains("code=abc"),
+            "código en el registro: {}",
+            e.message
+        );
     }
 }
 
@@ -202,7 +234,9 @@ impl Respond for Sequenced {
     fn respond(&self, _: &Request) -> ResponseTemplate {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         if n == self.slow {
-            ResponseTemplate::new(200).set_body_json(self.slow_body.clone()).set_delay(self.delay)
+            ResponseTemplate::new(200)
+                .set_body_json(self.slow_body.clone())
+                .set_delay(self.delay)
         } else {
             ResponseTemplate::new(200).set_body_json(self.fast_body.clone())
         }
@@ -224,7 +258,10 @@ async fn confirmed_permission_full_flow() {
     assert_eq!(snap.auth.status, AuthStatus::SignedIn);
     assert_eq!(snap.auth.username.as_deref(), Some("creadora"));
     assert_eq!(availability(&core), Availability::Confirmed);
-    assert!(env.store.peek().is_none(), "sin autorización no se guarda nada");
+    assert!(
+        env.store.peek().is_none(),
+        "sin autorización no se guarda nada"
+    );
 
     let snap = core.start_stream(request()).await.unwrap();
     let stream = snap.stream.unwrap();
@@ -237,7 +274,10 @@ async fn confirmed_permission_full_flow() {
 
     let raw = std::fs::read_to_string(env.dir.join("preferences.json")).unwrap();
     assert!(raw.contains("555") && !raw.contains(KEY));
-    assert_eq!(core.start_stream(request()).await.unwrap_err(), AppError::StreamAlreadyCreated);
+    assert_eq!(
+        core.start_stream(request()).await.unwrap_err(),
+        AppError::StreamAlreadyCreated
+    );
     assert!(core.end_stream().await.unwrap().stream.is_none());
     assert_no_secrets(&core);
 }
@@ -254,7 +294,13 @@ async fn login_can_be_cancelled() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(core.snapshot().auth.pending.unwrap().login_url.contains("code_challenge="));
+    assert!(core
+        .snapshot()
+        .auth
+        .pending
+        .unwrap()
+        .login_url
+        .contains("code_challenge="));
     assert_eq!(core.login().await.unwrap_err(), AppError::AuthInProgress);
     core.cancel_login();
     assert_eq!(task.await.unwrap().unwrap_err(), AppError::AuthCancelled);
@@ -265,20 +311,32 @@ async fn login_can_be_cancelled() {
 async fn login_times_out() {
     let env = Env::new().await;
     let core = env.core_callback(None, Duration::from_millis(300));
-    assert!(matches!(core.login().await.unwrap_err(), AppError::AuthTimeout(_)));
+    assert!(matches!(
+        core.login().await.unwrap_err(),
+        AppError::AuthTimeout(_)
+    ));
 }
 
 #[tokio::test]
 async fn provider_denial_and_rejected_code() {
     let env = Env::new().await;
-    let core = env.core_callback(Some("success=false&reason=connected_with_another_account"), Duration::from_secs(10));
-    assert!(matches!(core.login().await.unwrap_err(), AppError::AuthDenied(_)));
+    let core = env.core_callback(
+        Some("success=false&reason=connected_with_another_account"),
+        Duration::from_secs(10),
+    );
+    assert!(matches!(
+        core.login().await.unwrap_err(),
+        AppError::AuthDenied(_)
+    ));
     Mock::given(path(AUTH_DATA_PATH))
         .respond_with(ResponseTemplate::new(401).set_body_json(json!({"message": ""})))
         .mount(&env.server)
         .await;
     let core = env.core_callback(Some("success=true&code=zzz"), Duration::from_secs(10));
-    assert_eq!(core.login().await.unwrap_err(), AppError::AuthExchangeRejected);
+    assert_eq!(
+        core.login().await.unwrap_err(),
+        AppError::AuthExchangeRejected
+    );
 }
 
 // ------------------------------------------------ permiso de emisión y botón --
@@ -291,8 +349,17 @@ async fn emission_not_available_blocks_start_in_rust() {
     env.forbid_start().await;
     let core = env.core();
     let snap = core.login().await.unwrap();
-    assert_eq!(snap.auth.status, AuthStatus::SignedIn, "autenticado aunque sin permiso");
-    assert_eq!(availability(&core), Availability::NotAvailable { cause: UnavailableCause::NeverApplied });
+    assert_eq!(
+        snap.auth.status,
+        AuthStatus::SignedIn,
+        "autenticado aunque sin permiso"
+    );
+    assert_eq!(
+        availability(&core),
+        Availability::NotAvailable {
+            cause: UnavailableCause::NeverApplied
+        }
+    );
     let err = core.start_stream(request()).await.unwrap_err();
     assert!(matches!(err, AppError::LiveNotAvailable(_)), "{err:?}");
 }
@@ -310,9 +377,15 @@ async fn missing_null_or_unexpected_fields_are_unknown_and_block_start() {
         env.forbid_start().await;
         let core = env.core();
         core.login().await.unwrap();
-        assert!(matches!(availability(&core), Availability::Unknown { .. }), "{body}");
+        assert!(
+            matches!(availability(&core), Availability::Unknown { .. }),
+            "{body}"
+        );
         let err = core.start_stream(request()).await.unwrap_err();
-        assert!(matches!(err, AppError::AccessUnconfirmed(_)), "{body}: {err:?}");
+        assert!(
+            matches!(err, AppError::AccessUnconfirmed(_)),
+            "{body}: {err:?}"
+        );
     }
 }
 
@@ -320,12 +393,19 @@ async fn missing_null_or_unexpected_fields_are_unknown_and_block_start() {
 async fn contradictory_data_requires_refresh() {
     let env = Env::new().await;
     env.mock_exchange_ok().await;
-    env.mock_info_json(json!({"reason": 1, "can_be_live": false, "user": {}})).await;
+    env.mock_info_json(json!({"reason": 1, "can_be_live": false, "user": {}}))
+        .await;
     env.forbid_start().await;
     let core = env.core();
     core.login().await.unwrap();
-    assert!(matches!(availability(&core), Availability::Contradictory { .. }));
-    assert!(matches!(core.start_stream(request()).await.unwrap_err(), AppError::AccessUnconfirmed(_)));
+    assert!(matches!(
+        availability(&core),
+        Availability::Contradictory { .. }
+    ));
+    assert!(matches!(
+        core.start_stream(request()).await.unwrap_err(),
+        AppError::AccessUnconfirmed(_)
+    ));
 }
 
 #[tokio::test]
@@ -340,7 +420,11 @@ async fn failed_check_is_unknown_not_rejected() {
     let core = env.core();
     core.login().await.unwrap();
     let snap = core.snapshot();
-    assert_eq!(snap.auth.status, AuthStatus::SignedIn, "un fallo de comprobación no cierra la sesión");
+    assert_eq!(
+        snap.auth.status,
+        AuthStatus::SignedIn,
+        "un fallo de comprobación no cierra la sesión"
+    );
     match snap.auth.access {
         AccessView::Failed { error } => {
             assert_eq!(error.code, "PROVIDER_UNAVAILABLE");
@@ -348,7 +432,10 @@ async fn failed_check_is_unknown_not_rejected() {
         }
         other => panic!("{other:?}"),
     }
-    assert!(matches!(core.start_stream(request()).await.unwrap_err(), AppError::AccessUnconfirmed(_)));
+    assert!(matches!(
+        core.start_stream(request()).await.unwrap_err(),
+        AppError::AccessUnconfirmed(_)
+    ));
 }
 
 #[tokio::test]
@@ -385,7 +472,10 @@ async fn start_is_blocked_while_checking() {
     let refresh = tokio::spawn(async move { c.refresh_account().await });
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(matches!(core.snapshot().auth.access, AccessView::Checking));
-    assert_eq!(core.start_stream(request()).await.unwrap_err(), AppError::AccessCheckInProgress);
+    assert_eq!(
+        core.start_stream(request()).await.unwrap_err(),
+        AppError::AccessCheckInProgress
+    );
     refresh.await.unwrap().unwrap();
 }
 
@@ -404,7 +494,10 @@ async fn generic_provider_error_keeps_detail_and_is_not_permission() {
     let core = env.core();
     core.login().await.unwrap();
     let err = core.start_stream(request()).await.unwrap_err();
-    assert!(matches!(err, AppError::ProviderForbidden { status: 403, .. }), "{err:?}");
+    assert!(
+        matches!(err, AppError::ProviderForbidden { status: 403, .. }),
+        "{err:?}"
+    );
     assert!(!matches!(err, AppError::PermissionDenied { .. }));
     let info = ErrorInfo::from(&err);
     assert_eq!(info.detail.as_deref(), Some(GENERIC));
@@ -428,7 +521,10 @@ async fn invalid_token_on_check_closes_session() {
     let snap = core.snapshot();
     assert_eq!(snap.auth.status, AuthStatus::SignedOut);
     assert_eq!(snap.auth.session_error.unwrap().code, "TOKEN_INVALID");
-    assert!(env.store.peek().is_none(), "el token inválido se borra del almacén");
+    assert!(
+        env.store.peek().is_none(),
+        "el token inválido se borra del almacén"
+    );
 }
 
 #[tokio::test]
@@ -442,7 +538,10 @@ async fn invalid_token_on_start_closes_session() {
         .await;
     let core = env.core();
     core.login().await.unwrap();
-    assert_eq!(core.start_stream(request()).await.unwrap_err(), AppError::TokenInvalid);
+    assert_eq!(
+        core.start_stream(request()).await.unwrap_err(),
+        AppError::TokenInvalid
+    );
     assert_eq!(core.snapshot().auth.status, AuthStatus::SignedOut);
 }
 
@@ -473,7 +572,11 @@ async fn late_response_from_previous_session_is_discarded() {
     core.login().await.unwrap();
     assert_eq!(availability(&core), Availability::Confirmed);
     late.await.unwrap().unwrap();
-    assert_eq!(availability(&core), Availability::Confirmed, "la respuesta tardía no debe aplicarse");
+    assert_eq!(
+        availability(&core),
+        Availability::Confirmed,
+        "la respuesta tardía no debe aplicarse"
+    );
 }
 
 #[tokio::test]
@@ -509,7 +612,9 @@ async fn double_click_creates_a_single_live() {
         .and(path(STREAM_START_PATH))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"id": "555", "rtmp": "rtmp://push.example/game/", "key": KEY}))
+                .set_body_json(
+                    json!({"id": "555", "rtmp": "rtmp://push.example/game/", "key": KEY}),
+                )
                 .set_delay(Duration::from_millis(300)),
         )
         .expect(1)
@@ -532,8 +637,14 @@ async fn access_pages_open_verified_urls() {
     core.open_access_page(AccessPage::Apply).await.unwrap();
     core.open_access_page(AccessPage::Status).await.unwrap();
     let opened = env.browser.opened.lock().unwrap().clone();
-    assert_eq!(opened, vec![ACCESS_APPLY_URL.to_string(), ACCESS_STATUS_URL.to_string()]);
-    assert!(ACCESS_APPLY_URL.contains("live_access_pc_apply/intro") && ACCESS_APPLY_URL.contains("GL6399433079641606942"));
+    assert_eq!(
+        opened,
+        vec![ACCESS_APPLY_URL.to_string(), ACCESS_STATUS_URL.to_string()]
+    );
+    assert!(
+        ACCESS_APPLY_URL.contains("live_access_pc_apply/intro")
+            && ACCESS_APPLY_URL.contains("GL6399433079641606942")
+    );
 }
 
 #[tokio::test]
@@ -543,7 +654,10 @@ async fn remembered_session_is_restored() {
     env.mock_info(1).await;
     let core = env.core();
     core.set_remember(true).await.unwrap();
-    assert_eq!(core.login().await.unwrap().auth.persistence, Persistence::Keyring);
+    assert_eq!(
+        core.login().await.unwrap().auth.persistence,
+        Persistence::Keyring
+    );
     assert_eq!(env.store.peek().unwrap().expose(), TOKEN);
 
     let core2 = env.core_callback(None, Duration::from_secs(10));
@@ -562,10 +676,16 @@ async fn keyring_unavailable_falls_back_to_memory() {
     env.mock_info(1).await;
     let core = env.core();
     core.login().await.unwrap();
-    assert!(matches!(core.set_remember(true).await.unwrap_err(), AppError::Keyring(_)));
+    assert!(matches!(
+        core.set_remember(true).await.unwrap_err(),
+        AppError::Keyring(_)
+    ));
     let snap = core.snapshot();
     assert!(!snap.auth.remember);
-    assert!(matches!(snap.auth.persistence, Persistence::Unavailable { .. }));
+    assert!(matches!(
+        snap.auth.persistence,
+        Persistence::Unavailable { .. }
+    ));
     assert_eq!(snap.auth.status, AuthStatus::SignedIn);
 }
 
@@ -579,10 +699,16 @@ async fn logout_requires_ending_live_unless_forced() {
     core.login().await.unwrap();
     assert_eq!(core.login().await.unwrap_err(), AppError::AlreadyLoggedIn);
     core.start_stream(request()).await.unwrap();
-    assert_eq!(core.logout(false).await.unwrap_err(), AppError::StreamBlocksLogout);
+    assert_eq!(
+        core.logout(false).await.unwrap_err(),
+        AppError::StreamBlocksLogout
+    );
     let snap = core.logout(true).await.unwrap();
     assert_eq!(snap.auth.status, AuthStatus::SignedOut);
-    assert!(matches!(snap.auth.access, AccessView::Idle), "sin datos de la sesión anterior");
+    assert!(
+        matches!(snap.auth.access, AccessView::Idle),
+        "sin datos de la sesión anterior"
+    );
     assert!(snap.stream.is_some());
 }
 
@@ -613,11 +739,18 @@ async fn validation_happens_before_calling_provider() {
     env.forbid_start().await;
     let core = env.core();
     core.login().await.unwrap();
-    for (title, audience) in [("   ".to_string(), "0"), ("x".repeat(TITLE_MAX_CHARS + 1), "0"), ("ok".to_string(), "9")] {
+    for (title, audience) in [
+        ("   ".to_string(), "0"),
+        ("x".repeat(TITLE_MAX_CHARS + 1), "0"),
+        ("ok".to_string(), "9"),
+    ] {
         let mut r = request();
         r.title = title;
         r.audience_type = audience.into();
-        assert!(matches!(core.start_stream(r).await.unwrap_err(), AppError::Validation(_)));
+        assert!(matches!(
+            core.start_stream(r).await.unwrap_err(),
+            AppError::Validation(_)
+        ));
     }
 }
 
@@ -625,10 +758,22 @@ async fn validation_happens_before_calling_provider() {
 async fn operations_require_login() {
     let env = Env::new().await;
     let core = env.core_callback(None, Duration::from_secs(10));
-    assert_eq!(core.start_stream(request()).await.unwrap_err(), AppError::NotLoggedIn);
-    assert_eq!(core.refresh_account().await.unwrap_err(), AppError::NotLoggedIn);
-    assert_eq!(core.search_categories("x").await.unwrap_err(), AppError::NotLoggedIn);
-    assert_eq!(core.end_stream().await.unwrap_err(), AppError::NoActiveStream);
+    assert_eq!(
+        core.start_stream(request()).await.unwrap_err(),
+        AppError::NotLoggedIn
+    );
+    assert_eq!(
+        core.refresh_account().await.unwrap_err(),
+        AppError::NotLoggedIn
+    );
+    assert_eq!(
+        core.search_categories("x").await.unwrap_err(),
+        AppError::NotLoggedIn
+    );
+    assert_eq!(
+        core.end_stream().await.unwrap_err(),
+        AppError::NoActiveStream
+    );
 }
 
 #[tokio::test]

@@ -48,7 +48,9 @@ impl TokenStore for KeyringStore {
     }
 
     fn save(&self, token: &Secret) -> Result<(), String> {
-        Self::entry()?.set_password(token.expose()).map_err(describe)
+        Self::entry()?
+            .set_password(token.expose())
+            .map_err(describe)
     }
 
     fn delete(&self) -> Result<(), String> {
@@ -68,7 +70,10 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     pub fn failing() -> Self {
-        MemoryStore { value: Mutex::new(None), fail: true }
+        MemoryStore {
+            value: Mutex::new(None),
+            fail: true,
+        }
     }
     pub fn peek(&self) -> Option<Secret> {
         self.value.lock().unwrap().clone()

@@ -6,7 +6,9 @@ use super::models::{parse_account, parse_categories, summary, AuthDataResponse, 
 use crate::auth::{CallbackInterpreter, CallbackVerdict};
 use crate::error::{AppError, AppResult};
 use crate::event_log::{now_ms, EventLog};
-use crate::provider::{AccountInfo, AuthGrant, Category, LiveCredentials, LiveProvider, StartLiveRequest};
+use crate::provider::{
+    AccountInfo, AuthGrant, Category, LiveCredentials, LiveProvider, StartLiveRequest,
+};
 use crate::security::Secret;
 use async_trait::async_trait;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
@@ -36,7 +38,10 @@ struct HttpResponse {
 impl HttpResponse {
     /// `true` si el tipo de contenido es JSON o no se indicó.
     fn json_or_unspecified(&self) -> bool {
-        self.content_type.as_deref().map(|c| c.contains("json")).unwrap_or(true)
+        self.content_type
+            .as_deref()
+            .map(|c| c.contains("json"))
+            .unwrap_or(true)
     }
 }
 
@@ -54,7 +59,8 @@ impl StreamlabsProvider {
     /// Permite apuntar a otro servidor (pruebas automáticas).
     pub fn with_base_url(base: &str) -> AppResult<Self> {
         ensure_crypto_provider();
-        let base = Url::parse(base).map_err(|e| AppError::Internal(format!("URL base no válida: {e}")))?;
+        let base =
+            Url::parse(base).map_err(|e| AppError::Internal(format!("URL base no válida: {e}")))?;
         let http = reqwest::Client::builder()
             .user_agent(user_agent())
             .timeout(Duration::from_secs(25))
@@ -63,7 +69,11 @@ impl StreamlabsProvider {
             .https_only(base.scheme() == "https")
             .build()
             .map_err(|e| AppError::Internal(format!("cliente HTTP: {}", e.without_url())))?;
-        Ok(StreamlabsProvider { http, base, diag: None })
+        Ok(StreamlabsProvider {
+            http,
+            base,
+            diag: None,
+        })
     }
 
     /// Registra cada petición (operación, código, tipo, duración) en `log`.
@@ -93,7 +103,12 @@ impl StreamlabsProvider {
             Ok(r) => r,
             Err(e) => {
                 let err = network_error(e);
-                self.diag(format!("HTTP {}: sin respuesta ({}) · {} ms", op.name(), err, elapsed(started)));
+                self.diag(format!(
+                    "HTTP {}: sin respuesta ({}) · {} ms",
+                    op.name(),
+                    err,
+                    elapsed(started)
+                ));
                 return Err(err);
             }
         };
@@ -102,13 +117,27 @@ impl StreamlabsProvider {
             .headers()
             .get(CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
-        if resp.content_length().map(|l| l as usize > MAX_BODY_BYTES).unwrap_or(false) {
-            return Err(AppError::ProviderUnexpected("respuesta demasiado grande".into()));
+            .map(|v| {
+                v.split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase()
+            });
+        if resp
+            .content_length()
+            .map(|l| l as usize > MAX_BODY_BYTES)
+            .unwrap_or(false)
+        {
+            return Err(AppError::ProviderUnexpected(
+                "respuesta demasiado grande".into(),
+            ));
         }
         let bytes = resp.bytes().await.map_err(network_error)?;
         if bytes.len() > MAX_BODY_BYTES {
-            return Err(AppError::ProviderUnexpected("respuesta demasiado grande".into()));
+            return Err(AppError::ProviderUnexpected(
+                "respuesta demasiado grande".into(),
+            ));
         }
         let duration_ms = elapsed(started);
         self.diag(format!(
@@ -118,7 +147,12 @@ impl StreamlabsProvider {
             content_type.as_deref().unwrap_or("sin tipo"),
             duration_ms
         ));
-        Ok(HttpResponse { status, content_type, body: bytes.to_vec(), duration_ms })
+        Ok(HttpResponse {
+            status,
+            content_type,
+            body: bytes.to_vec(),
+            duration_ms,
+        })
     }
 
     /// Objeto JSON de una respuesta 2xx; valida el tipo de contenido antes.
@@ -133,7 +167,9 @@ impl StreamlabsProvider {
         serde_json::from_slice::<Value>(&resp.body)
             .ok()
             .filter(Value::is_object)
-            .ok_or_else(|| AppError::ProviderUnexpected(format!("{what} no devolvió un objeto JSON válido")))
+            .ok_or_else(|| {
+                AppError::ProviderUnexpected(format!("{what} no devolvió un objeto JSON válido"))
+            })
     }
 
     /// Registra el error de una operación (saneado, sin cuerpo).
@@ -174,7 +210,10 @@ impl CallbackInterpreter for StreamlabsProvider {
             None => CallbackVerdict::Ignore,
             Some("true") => {
                 let reason = get(CALLBACK_REASON);
-                if matches!(reason, Some("connected_with_another_account") | Some("unknown")) {
+                if matches!(
+                    reason,
+                    Some("connected_with_another_account") | Some("unknown")
+                ) {
                     return CallbackVerdict::Failed(AppError::AuthDenied(describe_reason(reason)));
                 }
                 match get(CALLBACK_CODE) {
@@ -184,7 +223,9 @@ impl CallbackInterpreter for StreamlabsProvider {
                     )),
                 }
             }
-            Some(_) => CallbackVerdict::Failed(AppError::AuthDenied(describe_reason(get(CALLBACK_REASON)))),
+            Some(_) => {
+                CallbackVerdict::Failed(AppError::AuthDenied(describe_reason(get(CALLBACK_REASON))))
+            }
         }
     }
 }
@@ -229,9 +270,13 @@ impl LiveProvider for StreamlabsProvider {
                                     username: d.platform_username.take().filter(|u| !u.is_empty()),
                                     platform: d.platform.take(),
                                 }),
-                                None => Err(AppError::ProviderUnexpected("falta data.oauth_token".into())),
+                                None => Err(AppError::ProviderUnexpected(
+                                    "falta data.oauth_token".into(),
+                                )),
                             },
-                            None => Err(AppError::ProviderUnexpected("falta el objeto data".into())),
+                            None => {
+                                Err(AppError::ProviderUnexpected("falta el objeto data".into()))
+                            }
                         }
                     }
                 }
@@ -250,7 +295,10 @@ impl LiveProvider for StreamlabsProvider {
     }
 
     async fn account_info(&self, token: &Secret) -> AppResult<AccountInfo> {
-        let req = self.http.get(self.url(TIKTOK_INFO_PATH)).bearer_auth(token.expose());
+        let req = self
+            .http
+            .get(self.url(TIKTOK_INFO_PATH))
+            .bearer_auth(token.expose());
         let resp = self.send(Op::Info, req).await?;
         let result = (|| {
             if resp.status != 200 {
@@ -270,12 +318,21 @@ impl LiveProvider for StreamlabsProvider {
     }
 
     async fn search_categories(&self, token: &Secret, query: &str) -> AppResult<Vec<Category>> {
-        let q: String = query.trim().chars().take(CATEGORY_QUERY_MAX_CHARS).collect();
+        let q: String = query
+            .trim()
+            .chars()
+            .take(CATEGORY_QUERY_MAX_CHARS)
+            .collect();
         let mut out = Vec::new();
         if !q.is_empty() {
             let mut url = self.url(TIKTOK_INFO_PATH);
             url.query_pairs_mut().append_pair("category", &q);
-            let resp = self.send(Op::Categories, self.http.get(url).bearer_auth(token.expose())).await?;
+            let resp = self
+                .send(
+                    Op::Categories,
+                    self.http.get(url).bearer_auth(token.expose()),
+                )
+                .await?;
             if resp.status != 200 {
                 let e = map_http_error(Op::Categories, resp.status, &resp.body);
                 self.diag_error(Op::Categories, &e);
@@ -290,11 +347,18 @@ impl LiveProvider for StreamlabsProvider {
             })?;
         }
         out.retain(|c| !c.id.is_empty());
-        out.push(Category { id: String::new(), name: OTHER_CATEGORY_NAME.into() });
+        out.push(Category {
+            id: String::new(),
+            name: OTHER_CATEGORY_NAME.into(),
+        });
         Ok(out)
     }
 
-    async fn start_live(&self, token: &Secret, req: &StartLiveRequest) -> AppResult<LiveCredentials> {
+    async fn start_live(
+        &self,
+        token: &Secret,
+        req: &StartLiveRequest,
+    ) -> AppResult<LiveCredentials> {
         // Mismos campos y orden que Streamlabs Desktop (`startStream`) y que la
         // referencia (`Stream.start`): title, device_platform, category, audience_type.
         let form = Form::new()
@@ -306,7 +370,11 @@ impl LiveProvider for StreamlabsProvider {
             "{}: título de {} caracteres · category={} · device_platform={} · audience_type={}",
             Op::Start.name(),
             req.title.chars().count(),
-            if req.category.id.is_empty() { "«» (Otra)".to_string() } else { format!("id {}", req.category.id) },
+            if req.category.id.is_empty() {
+                "«» (Otra)".to_string()
+            } else {
+                format!("id {}", req.category.id)
+            },
             device_platform(),
             req.audience_type
         ));
@@ -321,15 +389,24 @@ impl LiveProvider for StreamlabsProvider {
                 Ok(mut r) => {
                     let id = r.id_string();
                     match (id, r.rtmp.take(), r.key.take()) {
-                        (Some(id), Some(rtmp), Some(key)) if !rtmp.trim().is_empty() && !key.is_empty() => {
-                            Ok(LiveCredentials { id, server: rtmp.trim().to_string(), key: Secret::new(key) })
+                        (Some(id), Some(rtmp), Some(key))
+                            if !rtmp.trim().is_empty() && !key.is_empty() =>
+                        {
+                            Ok(LiveCredentials {
+                                id,
+                                server: rtmp.trim().to_string(),
+                                key: Secret::new(key),
+                            })
                         }
                         (_, mut rtmp, mut key) => {
                             rtmp.zeroize();
                             key.zeroize();
-                            let v: Value = serde_json::from_slice(&resp.body).unwrap_or(Value::Null);
+                            let v: Value =
+                                serde_json::from_slice(&resp.body).unwrap_or(Value::Null);
                             Err(body_error(resp.status, &v).unwrap_or_else(|| {
-                                AppError::ProviderUnexpected("la respuesta no incluye id, rtmp y key".into())
+                                AppError::ProviderUnexpected(
+                                    "la respuesta no incluye id, rtmp y key".into(),
+                                )
                             }))
                         }
                     }
@@ -361,7 +438,9 @@ impl LiveProvider for StreamlabsProvider {
             .map_err(|_| AppError::Internal("URL base no válida".into()))?
             .push(id)
             .push(STREAM_END_SUFFIX);
-        let resp = self.send(Op::End, self.http.post(url).bearer_auth(token.expose())).await?;
+        let resp = self
+            .send(Op::End, self.http.post(url).bearer_auth(token.expose()))
+            .await?;
         let result = if !(200..300).contains(&resp.status) {
             Err(map_http_error(Op::End, resp.status, &resp.body))
         } else {
@@ -399,7 +478,10 @@ mod tests {
     fn req() -> StartLiveRequest {
         StartLiveRequest {
             title: "Mi directo".into(),
-            category: Category { id: "123".into(), name: "Juego".into() },
+            category: Category {
+                id: "123".into(),
+                name: "Juego".into(),
+            },
             audience_type: "0".into(),
         }
     }
@@ -418,16 +500,29 @@ mod tests {
     fn interprets_callback_parameters() {
         let p = StreamlabsProvider::production().unwrap();
         let params = |v: &[(&str, &str)]| -> Vec<(String, String)> {
-            v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+            v.iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect()
         };
-        assert!(matches!(p.interpret("/", &params(&[("success", "true"), ("code", "abc")])), CallbackVerdict::Code(c) if c.expose() == "abc"));
-        assert!(matches!(p.interpret("/favicon.ico", &params(&[])), CallbackVerdict::Ignore));
+        assert!(
+            matches!(p.interpret("/", &params(&[("success", "true"), ("code", "abc")])), CallbackVerdict::Code(c) if c.expose() == "abc")
+        );
+        assert!(matches!(
+            p.interpret("/favicon.ico", &params(&[])),
+            CallbackVerdict::Ignore
+        ));
         assert!(matches!(
             p.interpret("/", &params(&[("success", "false"), ("reason", "connected_with_another_account")])),
             CallbackVerdict::Failed(AppError::AuthDenied(m)) if m.contains("otra cuenta")
         ));
-        assert!(matches!(p.interpret("/", &params(&[("success", "true")])), CallbackVerdict::Failed(_)));
-        assert!(matches!(p.interpret("/", &params(&[("success", "true"), ("code", "a b")])), CallbackVerdict::Failed(_)));
+        assert!(matches!(
+            p.interpret("/", &params(&[("success", "true")])),
+            CallbackVerdict::Failed(_)
+        ));
+        assert!(matches!(
+            p.interpret("/", &params(&[("success", "true"), ("code", "a b")])),
+            CallbackVerdict::Failed(_)
+        ));
     }
 
     #[tokio::test]
@@ -445,7 +540,10 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let g = p.exchange_code(&Secret::new("the-code"), &Secret::new("the-verifier")).await.unwrap();
+        let g = p
+            .exchange_code(&Secret::new("the-code"), &Secret::new("the-verifier"))
+            .await
+            .unwrap();
         assert_eq!(g.token.expose(), "OAUTH123");
         assert_eq!(g.username.as_deref(), Some("creadora"));
         assert_eq!(g.platform.as_deref(), Some("tiktok"));
@@ -461,7 +559,9 @@ mod tests {
             .await;
         Mock::given(path(AUTH_DATA_PATH))
             .and(query_param("code", "nofield"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true, "data": {}})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"success": true, "data": {}})),
+            )
             .mount(&server)
             .await;
         Mock::given(path(AUTH_DATA_PATH))
@@ -475,10 +575,27 @@ mod tests {
             .mount(&server)
             .await;
         let v = Secret::new("v");
-        assert_eq!(p.exchange_code(&Secret::new("bad"), &v).await.unwrap_err(), AppError::AuthExchangeRejected);
-        assert!(matches!(p.exchange_code(&Secret::new("nofield"), &v).await.unwrap_err(), AppError::ProviderUnexpected(_)));
-        assert_eq!(p.exchange_code(&Secret::new("fail"), &v).await.unwrap_err(), AppError::AuthExchangeRejected);
-        assert_eq!(p.exchange_code(&Secret::new("down"), &v).await.unwrap_err(), AppError::ProviderUnavailable { status: 502, message: None });
+        assert_eq!(
+            p.exchange_code(&Secret::new("bad"), &v).await.unwrap_err(),
+            AppError::AuthExchangeRejected
+        );
+        assert!(matches!(
+            p.exchange_code(&Secret::new("nofield"), &v)
+                .await
+                .unwrap_err(),
+            AppError::ProviderUnexpected(_)
+        ));
+        assert_eq!(
+            p.exchange_code(&Secret::new("fail"), &v).await.unwrap_err(),
+            AppError::AuthExchangeRejected
+        );
+        assert_eq!(
+            p.exchange_code(&Secret::new("down"), &v).await.unwrap_err(),
+            AppError::ProviderUnavailable {
+                status: 502,
+                message: None
+            }
+        );
     }
 
     #[tokio::test]
@@ -495,7 +612,12 @@ mod tests {
             .mount(&server)
             .await;
         let a = p.account_info(&token()).await.unwrap();
-        assert_eq!(a.access.availability, Availability::NotAvailable { cause: UnavailableCause::Rejected });
+        assert_eq!(
+            a.access.availability,
+            Availability::NotAvailable {
+                cause: UnavailableCause::Rejected
+            }
+        );
         assert_eq!(a.access.can_be_live, Field::Present { value: false });
         assert_eq!(a.http_status, 200);
     }
@@ -507,17 +629,25 @@ mod tests {
             .respond_with(ResponseTemplate::new(401).set_body_raw("Unauthorized.", "text/html"))
             .mount(&server)
             .await;
-        assert_eq!(p.account_info(&token()).await.unwrap_err(), AppError::TokenInvalid);
+        assert_eq!(
+            p.account_info(&token()).await.unwrap_err(),
+            AppError::TokenInvalid
+        );
     }
 
     #[tokio::test]
     async fn redirects_are_not_followed() {
         let (server, p) = setup().await;
         Mock::given(path(TIKTOK_INFO_PATH))
-            .respond_with(ResponseTemplate::new(302).insert_header("location", "https://evil.example/"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", "https://evil.example/"),
+            )
             .mount(&server)
             .await;
-        assert!(matches!(p.account_info(&token()).await.unwrap_err(), AppError::ProviderUnexpected(_)));
+        assert!(matches!(
+            p.account_info(&token()).await.unwrap_err(),
+            AppError::ProviderUnexpected(_)
+        ));
     }
 
     #[tokio::test]
@@ -531,13 +661,22 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let list = p.search_categories(&token(), "abcdefghijklmnopqrstuvwxyz0123").await.unwrap();
+        let list = p
+            .search_categories(&token(), "abcdefghijklmnopqrstuvwxyz0123")
+            .await
+            .unwrap();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "Juego Uno");
         assert_eq!(list[1].id, "");
         // Consulta vacía: solo "Otra", sin llamar al proveedor.
         let only_other = p.search_categories(&token(), "  ").await.unwrap();
-        assert_eq!(only_other, vec![Category { id: String::new(), name: OTHER_CATEGORY_NAME.into() }]);
+        assert_eq!(
+            only_other,
+            vec![Category {
+                id: String::new(),
+                name: OTHER_CATEGORY_NAME.into()
+            }]
+        );
     }
 
     #[tokio::test]
@@ -576,25 +715,70 @@ mod tests {
     #[tokio::test]
     async fn start_error_responses() {
         let cases: Vec<(ResponseTemplate, ErrorCheck)> = vec![
-            (ResponseTemplate::new(401).set_body_raw("Unauthorized.", "text/html"), |e| *e == AppError::TokenInvalid),
-            (ResponseTemplate::new(403).set_body_json(json!({"message": "Unable to go live. Please try again later"})), |e| matches!(e, AppError::ProviderForbidden { status: 403, message: Some(m) } if m.starts_with("Unable to go live"))),
-            (ResponseTemplate::new(400).set_body_json(json!({"data": {"code": "user_has_no_live_auth"}})), |e| matches!(e, AppError::PermissionDenied { .. })),
-            (ResponseTemplate::new(403).set_body_raw("<html>cf</html>", "text/html"), |e| matches!(e, AppError::ProviderBlocked { .. })),
-            (ResponseTemplate::new(422).set_body_json(json!({})), |e| matches!(e, AppError::AccountRestricted { .. })),
+            (
+                ResponseTemplate::new(401).set_body_raw("Unauthorized.", "text/html"),
+                |e| *e == AppError::TokenInvalid,
+            ),
+            (
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"message": "Unable to go live. Please try again later"})),
+                |e| matches!(e, AppError::ProviderForbidden { status: 403, message: Some(m) } if m.starts_with("Unable to go live")),
+            ),
+            (
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({"data": {"code": "user_has_no_live_auth"}})),
+                |e| matches!(e, AppError::PermissionDenied { .. }),
+            ),
+            (
+                ResponseTemplate::new(403).set_body_raw("<html>cf</html>", "text/html"),
+                |e| matches!(e, AppError::ProviderBlocked { .. }),
+            ),
+            (ResponseTemplate::new(422).set_body_json(json!({})), |e| {
+                matches!(e, AppError::AccountRestricted { .. })
+            }),
             (ResponseTemplate::new(429), |e| *e == AppError::RateLimited),
-            (ResponseTemplate::new(500), |e| *e == AppError::ProviderUnavailable { status: 500, message: None }),
-            (ResponseTemplate::new(500).set_body_json(json!({"message": "Unable to go live. Please try again later"})), |e| e.provider_detail() == Some("Unable to go live. Please try again later")),
-            (ResponseTemplate::new(200).set_body_json(json!({"success": false, "message": "Limit"})), |e| matches!(e, AppError::ProviderRejected { status: 200, .. })),
-            (ResponseTemplate::new(200).set_body_json(json!({"id": "1"})), |e| matches!(e, AppError::ProviderUnexpected(_))),
-            (ResponseTemplate::new(200).set_body_raw("<html>ok</html>", "text/html"), |e| matches!(e, AppError::ProviderUnexpected(_))),
-            (ResponseTemplate::new(400).set_body_json(json!({"data": {"code": "user_already_live"}})), |e| *e == AppError::AlreadyLive),
+            (ResponseTemplate::new(500), |e| {
+                *e == AppError::ProviderUnavailable {
+                    status: 500,
+                    message: None,
+                }
+            }),
+            (
+                ResponseTemplate::new(500)
+                    .set_body_json(json!({"message": "Unable to go live. Please try again later"})),
+                |e| e.provider_detail() == Some("Unable to go live. Please try again later"),
+            ),
+            (
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"success": false, "message": "Limit"})),
+                |e| matches!(e, AppError::ProviderRejected { status: 200, .. }),
+            ),
+            (
+                ResponseTemplate::new(200).set_body_json(json!({"id": "1"})),
+                |e| matches!(e, AppError::ProviderUnexpected(_)),
+            ),
+            (
+                ResponseTemplate::new(200).set_body_raw("<html>ok</html>", "text/html"),
+                |e| matches!(e, AppError::ProviderUnexpected(_)),
+            ),
+            (
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({"data": {"code": "user_already_live"}})),
+                |e| *e == AppError::AlreadyLive,
+            ),
         ];
         for (i, (resp, check)) in cases.into_iter().enumerate() {
             let (server, p) = setup().await;
-            Mock::given(path(STREAM_START_PATH)).respond_with(resp).mount(&server).await;
+            Mock::given(path(STREAM_START_PATH))
+                .respond_with(resp)
+                .mount(&server)
+                .await;
             let err = p.start_live(&token(), &req()).await.unwrap_err();
             assert!(check(&err), "caso {i}: {err:?}");
-            assert!(!err.to_string().contains("tok_test"), "caso {i}: el token no debe aparecer");
+            assert!(
+                !err.to_string().contains("tok_test"),
+                "caso {i}: el token no debe aparecer"
+            );
         }
     }
 
@@ -617,7 +801,10 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": false})))
             .mount(&server)
             .await;
-        assert!(matches!(p.end_live(&token(), "9").await.unwrap_err(), AppError::ProviderRejected { .. }));
+        assert!(matches!(
+            p.end_live(&token(), "9").await.unwrap_err(),
+            AppError::ProviderRejected { .. }
+        ));
     }
 
     #[tokio::test]
@@ -625,7 +812,10 @@ mod tests {
         // Puerto cerrado: error de conexión. La URL lleva el code y el verifier.
         let p = StreamlabsProvider::with_base_url("http://127.0.0.1:9").unwrap();
         let err = p
-            .exchange_code(&Secret::new("SECRETCODE123"), &Secret::new("SECRETVERIFIER456"))
+            .exchange_code(
+                &Secret::new("SECRETCODE123"),
+                &Secret::new("SECRETVERIFIER456"),
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::Network(_)));
@@ -638,27 +828,40 @@ mod tests {
         let (server, p) = setup().await;
         Mock::given(path(TIKTOK_INFO_PATH))
             .respond_with(|r: &Request| {
-                let ua = r.headers.get("user-agent").and_then(|h| h.to_str().ok()).unwrap_or("");
+                let ua = r
+                    .headers
+                    .get("user-agent")
+                    .and_then(|h| h.to_str().ok())
+                    .unwrap_or("");
                 if ua.starts_with("TikTokOBSConnector/") && !ua.contains("Windows") {
-                    ResponseTemplate::new(200).set_body_json(json!({"reason": 1, "user": {"username": "u"}}))
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"reason": 1, "user": {"username": "u"}}))
                 } else {
                     ResponseTemplate::new(400)
                 }
             })
             .mount(&server)
             .await;
-        assert_eq!(p.account_info(&token()).await.unwrap().access.availability, Availability::Confirmed);
+        assert_eq!(
+            p.account_info(&token()).await.unwrap().access.availability,
+            Availability::Confirmed
+        );
     }
 
     #[tokio::test]
     async fn info_checks_content_type_before_parsing() {
         let (server, p) = setup().await;
         Mock::given(path(TIKTOK_INFO_PATH))
-            .respond_with(ResponseTemplate::new(200).set_body_raw("<html>login</html>", "text/html"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw("<html>login</html>", "text/html"),
+            )
             .mount(&server)
             .await;
         let e = p.account_info(&token()).await.unwrap_err();
-        assert!(matches!(e, AppError::ProviderUnexpected(ref m) if m.contains("text/html")), "{e:?}");
+        assert!(
+            matches!(e, AppError::ProviderUnexpected(ref m) if m.contains("text/html")),
+            "{e:?}"
+        );
     }
 
     #[tokio::test]
@@ -669,9 +872,18 @@ mod tests {
             ResponseTemplate::new(200).set_body_json(json!(["no", "objeto"])),
         ] {
             let (server, p) = setup().await;
-            Mock::given(path(TIKTOK_INFO_PATH)).respond_with(resp).mount(&server).await;
+            Mock::given(path(TIKTOK_INFO_PATH))
+                .respond_with(resp)
+                .mount(&server)
+                .await;
             let e = p.account_info(&token()).await.unwrap_err();
-            assert!(!matches!(e, AppError::PermissionDenied { .. } | AppError::LiveNotAvailable(_)), "{e:?}");
+            assert!(
+                !matches!(
+                    e,
+                    AppError::PermissionDenied { .. } | AppError::LiveNotAvailable(_)
+                ),
+                "{e:?}"
+            );
         }
     }
 
@@ -679,7 +891,9 @@ mod tests {
     async fn diagnostics_record_status_without_secrets() {
         let server = MockServer::start().await;
         let log = Arc::new(EventLog::default());
-        let p = StreamlabsProvider::with_base_url(&server.uri()).unwrap().with_diagnostics(log.clone());
+        let p = StreamlabsProvider::with_base_url(&server.uri())
+            .unwrap()
+            .with_diagnostics(log.clone());
         Mock::given(path(STREAM_START_PATH))
             .respond_with(ResponseTemplate::new(403).set_body_json(json!({"message": "Unable to go live. Please try again later", "key": "live_SECRET_999"})))
             .mount(&server)
@@ -687,9 +901,15 @@ mod tests {
         let _ = p.start_live(&token(), &req()).await;
         let text: Vec<String> = log.entries().into_iter().map(|e| e.message).collect();
         let all = text.join("\n");
-        assert!(all.contains("stream_start: 403 · application/json"), "{all}");
+        assert!(
+            all.contains("stream_start: 403 · application/json"),
+            "{all}"
+        );
         assert!(all.contains("category=id 123"), "{all}");
         assert!(all.contains("Unable to go live"), "{all}");
-        assert!(!all.contains("tok_test_1234567890") && !all.contains("live_SECRET_999"), "{all}");
+        assert!(
+            !all.contains("tok_test_1234567890") && !all.contains("live_SECRET_999"),
+            "{all}"
+        );
     }
 }

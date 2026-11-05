@@ -62,7 +62,12 @@ pub fn format_utc(ms: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}", rem / 3600, (rem % 3600) / 60, rem % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
 }
 
 pub fn format_entry(e: &LogEntry) -> String {
@@ -100,11 +105,20 @@ impl EventLog {
     }
 
     fn write_file(&self, entry: &LogEntry) {
-        let Some(path) = self.file.lock().unwrap().clone() else { return };
-        if std::fs::metadata(&path).map(|m| m.len() > MAX_FILE_BYTES).unwrap_or(false) {
+        let Some(path) = self.file.lock().unwrap().clone() else {
+            return;
+        };
+        if std::fs::metadata(&path)
+            .map(|m| m.len() > MAX_FILE_BYTES)
+            .unwrap_or(false)
+        {
             let _ = std::fs::rename(&path, path.with_extension("log.1"));
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let _ = writeln!(f, "{}", format_entry(entry));
         }
     }
@@ -113,7 +127,11 @@ impl EventLog {
     pub fn recent_text(&self, n: usize) -> String {
         let list = self.entries.lock().unwrap();
         let skip = list.len().saturating_sub(n);
-        list.iter().skip(skip).map(format_entry).collect::<Vec<_>>().join("\n")
+        list.iter()
+            .skip(skip)
+            .map(format_entry)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Registra un secreto para eliminarlo de cualquier mensaje futuro.
@@ -213,11 +231,17 @@ mod tests {
         log.protect(&Secret::new("tok_abcdefghijklmnop"));
         log.info("token tok_abcdefghijklmnop y code=XYZ123");
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("[INFO]") && !text.contains("tok_abcdefghijklmnop") && !text.contains("XYZ123"));
+        assert!(
+            text.contains("[INFO]")
+                && !text.contains("tok_abcdefghijklmnop")
+                && !text.contains("XYZ123")
+        );
         std::fs::write(&path, vec![b'x'; (MAX_FILE_BYTES + 10) as usize]).unwrap();
         log.info("tras rotar");
         assert!(path.with_extension("log.1").exists());
-        assert!(std::fs::read_to_string(&path).unwrap().contains("tras rotar"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("tras rotar"));
         assert!(log.recent_text(1).contains("tras rotar"));
         let _ = std::fs::remove_dir_all(dir);
     }

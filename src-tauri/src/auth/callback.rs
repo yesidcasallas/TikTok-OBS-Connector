@@ -176,7 +176,11 @@ fn parse_request(head: &[u8]) -> Option<ParsedRequest> {
             host = Some(value.trim().to_string());
         }
     }
-    Some(ParsedRequest { method, target, host })
+    Some(ParsedRequest {
+        method,
+        target,
+        host,
+    })
 }
 
 fn host_matches(host: Option<&str>, port: u16) -> bool {
@@ -199,7 +203,13 @@ async fn handle_connection<I: CallbackInterpreter + ?Sized>(
     let mut head = match tokio::time::timeout(READ_TIMEOUT, read_head(&mut stream)).await {
         Ok(Ok(h)) => h,
         Ok(Err(ReadError::TooLarge)) => {
-            respond(&mut stream, 431, "Request Header Fields Too Large", &page_simple("Petición demasiado grande.")).await;
+            respond(
+                &mut stream,
+                431,
+                "Request Header Fields Too Large",
+                &page_simple("Petición demasiado grande."),
+            )
+            .await;
             drain(&mut stream).await;
             return;
         }
@@ -208,15 +218,33 @@ async fn handle_connection<I: CallbackInterpreter + ?Sized>(
     let parsed = parse_request(&head);
     head.zeroize();
     let Some(req) = parsed else {
-        respond(&mut stream, 400, "Bad Request", &page_simple("Petición no válida.")).await;
+        respond(
+            &mut stream,
+            400,
+            "Bad Request",
+            &page_simple("Petición no válida."),
+        )
+        .await;
         return;
     };
     if req.method != "GET" {
-        respond(&mut stream, 405, "Method Not Allowed", &page_simple("Método no permitido.")).await;
+        respond(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            &page_simple("Método no permitido."),
+        )
+        .await;
         return;
     }
     if !host_matches(req.host.as_deref(), port) {
-        respond(&mut stream, 400, "Bad Request", &page_simple("Host no válido.")).await;
+        respond(
+            &mut stream,
+            400,
+            "Bad Request",
+            &page_simple("Host no válido."),
+        )
+        .await;
         return;
     }
 
@@ -224,8 +252,9 @@ async fn handle_connection<I: CallbackInterpreter + ?Sized>(
         Some((p, q)) => (p, q.split('#').next().unwrap_or("")),
         None => (req.target.as_str(), ""),
     };
-    let mut params: Vec<(String, String)> =
-        url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+    let mut params: Vec<(String, String)> = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect();
     let verdict = interp.interpret(path, &params);
     for (k, v) in params.iter_mut() {
         k.zeroize();
@@ -235,7 +264,13 @@ async fn handle_connection<I: CallbackInterpreter + ?Sized>(
 
     match verdict {
         CallbackVerdict::Ignore => {
-            respond(&mut stream, 404, "Not Found", &page_simple("No encontrado.")).await;
+            respond(
+                &mut stream,
+                404,
+                "Not Found",
+                &page_simple("No encontrado."),
+            )
+            .await;
         }
         CallbackVerdict::Code(code) => {
             if claimed.swap(true, Ordering::SeqCst) {
@@ -249,7 +284,13 @@ async fn handle_connection<I: CallbackInterpreter + ?Sized>(
             if claimed.swap(true, Ordering::SeqCst) {
                 respond(&mut stream, 409, "Conflict", &page_done()).await;
             } else {
-                respond(&mut stream, 400, "Bad Request", &page_failure(&err.to_string())).await;
+                respond(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    &page_failure(&err.to_string()),
+                )
+                .await;
                 let _ = tx.send(CallbackVerdict::Failed(err)).await;
             }
         }
@@ -354,9 +395,9 @@ mod tests {
                     Some(c) if !c.is_empty() => CallbackVerdict::Code(Secret::new(c)),
                     _ => CallbackVerdict::Failed(AppError::AuthDenied("sin código".into())),
                 },
-                Some(_) => CallbackVerdict::Failed(AppError::AuthDenied(
-                    get("reason").unwrap_or_default(),
-                )),
+                Some(_) => {
+                    CallbackVerdict::Failed(AppError::AuthDenied(get("reason").unwrap_or_default()))
+                }
                 None => CallbackVerdict::Ignore,
             }
         }
@@ -371,17 +412,26 @@ mod tests {
     }
 
     async fn get(port: u16, target: &str) -> String {
-        raw(port, &format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n")).await
+        raw(
+            port,
+            &format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+        )
+        .await
     }
 
     async fn start_async(
         timeout: Duration,
-    ) -> (u16, CancellationToken, tokio::task::JoinHandle<AppResult<Secret>>) {
+    ) -> (
+        u16,
+        CancellationToken,
+        tokio::task::JoinHandle<AppResult<Secret>>,
+    ) {
         let server = LoopbackServer::bind().await.unwrap();
         let port = server.port();
         let cancel = CancellationToken::new();
         let c = cancel.clone();
-        let handle = tokio::spawn(async move { server.wait(Arc::new(TestInterp), c, timeout).await });
+        let handle =
+            tokio::spawn(async move { server.wait(Arc::new(TestInterp), c, timeout).await });
         (port, cancel, handle)
     }
 
@@ -479,7 +529,11 @@ mod tests {
             "a".repeat(MAX_HEAD_BYTES + 10)
         );
         let resp = raw(port, &big).await;
-        assert!(resp.starts_with("HTTP/1.1 431"), "respuesta: {:?}", &resp[..resp.len().min(200)]);
+        assert!(
+            resp.starts_with("HTTP/1.1 431"),
+            "respuesta: {:?}",
+            &resp[..resp.len().min(200)]
+        );
         cancel.cancel();
         assert_eq!(handle.await.unwrap().unwrap_err(), AppError::AuthCancelled);
     }
@@ -487,10 +541,17 @@ mod tests {
     #[tokio::test]
     async fn provider_failure_ends_attempt() {
         let (port, _c, handle) = start_async(Duration::from_secs(10)).await;
-        let resp = get(port, "/?success=false&reason=connected_with_another_account").await;
+        let resp = get(
+            port,
+            "/?success=false&reason=connected_with_another_account",
+        )
+        .await;
         assert!(resp.starts_with("HTTP/1.1 400"));
         let err = handle.await.unwrap().unwrap_err();
-        assert_eq!(err, AppError::AuthDenied("connected_with_another_account".into()));
+        assert_eq!(
+            err,
+            AppError::AuthDenied("connected_with_another_account".into())
+        );
         assert!(port_closed(port).await);
     }
 

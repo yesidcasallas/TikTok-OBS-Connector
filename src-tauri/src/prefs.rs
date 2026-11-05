@@ -32,7 +32,9 @@ pub struct PreferencesStore {
 
 impl PreferencesStore {
     pub fn new(dir: Option<PathBuf>) -> Self {
-        PreferencesStore { path: dir.map(|d| d.join("preferences.json")) }
+        PreferencesStore {
+            path: dir.map(|d| d.join("preferences.json")),
+        }
     }
 
     pub fn load(&self) -> Preferences {
@@ -44,7 +46,9 @@ impl PreferencesStore {
     }
 
     pub fn save(&self, prefs: &Preferences) -> std::io::Result<()> {
-        let Some(path) = &self.path else { return Ok(()) };
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -76,7 +80,10 @@ mod tests {
         let prefs = Preferences {
             remember_session: true,
             last_title: "Título".into(),
-            last_category: Some(Category { id: "1".into(), name: "Juego".into() }),
+            last_category: Some(Category {
+                id: "1".into(),
+                name: "Juego".into(),
+            }),
             audience_type: "0".into(),
             active_stream: Some(ActiveStreamRecord {
                 id: "42".into(),
@@ -88,7 +95,14 @@ mod tests {
         store.save(&prefs).unwrap();
         assert_eq!(store.load(), prefs);
         let raw = std::fs::read_to_string(dir.join("preferences.json")).unwrap();
-        for forbidden in ["token", "\"key\"", "streamKey", "rtmp", "verifier", "\"code\""] {
+        for forbidden in [
+            "token",
+            "\"key\"",
+            "streamKey",
+            "rtmp",
+            "verifier",
+            "\"code\"",
+        ] {
             assert!(!raw.contains(forbidden), "no debe contener {forbidden}");
         }
         let _ = std::fs::remove_dir_all(dir);
@@ -99,7 +113,10 @@ mod tests {
         let dir = temp_dir("bad");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("preferences.json"), b"{no json").unwrap();
-        assert_eq!(PreferencesStore::new(Some(dir.clone())).load(), Preferences::default());
+        assert_eq!(
+            PreferencesStore::new(Some(dir.clone())).load(),
+            Preferences::default()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }

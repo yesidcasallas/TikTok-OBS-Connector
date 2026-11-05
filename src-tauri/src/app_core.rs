@@ -8,9 +8,13 @@ use crate::auth::{LoopbackServer, Pkce};
 use crate::error::{AppError, AppResult, ErrorInfo};
 use crate::event_log::{now_ms, EventLog};
 use crate::prefs::{ActiveStreamRecord, Preferences, PreferencesStore};
-use crate::provider::streamlabs::endpoints::{device_platform, ACCESS_APPLY_URL, ACCESS_STATUS_URL, TITLE_MAX_CHARS};
+use crate::provider::streamlabs::endpoints::{
+    device_platform, ACCESS_APPLY_URL, ACCESS_STATUS_URL, TITLE_MAX_CHARS,
+};
 use crate::provider::streamlabs::models::summary;
-use crate::provider::{AccountInfo, Availability, Category, LiveProvider, StartLiveRequest, UnavailableCause};
+use crate::provider::{
+    AccountInfo, Availability, Category, LiveProvider, StartLiveRequest, UnavailableCause,
+};
 use crate::security::{Secret, TokenStore};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -215,7 +219,9 @@ pub fn cause_text(c: UnavailableCause) -> &'static str {
 fn availability_label(a: &Availability) -> String {
     match a {
         Availability::Confirmed => "permiso de emisión confirmado".into(),
-        Availability::NotAvailable { cause } => format!("emisión no disponible ({})", cause_text(*cause)),
+        Availability::NotAvailable { cause } => {
+            format!("emisión no disponible ({})", cause_text(*cause))
+        }
         Availability::Contradictory { detail } => format!("datos contradictorios ({detail})"),
         Availability::Unknown { detail } => format!("estado desconocido ({detail})"),
     }
@@ -288,7 +294,8 @@ impl AppCore {
         let mut p = self.prefs.lock().unwrap();
         f(&mut p);
         if let Err(e) = self.prefs_store.save(&p) {
-            self.log.warn(format!("No se pudieron guardar las preferencias: {e}"));
+            self.log
+                .warn(format!("No se pudieron guardar las preferencias: {e}"));
         }
     }
 
@@ -311,7 +318,11 @@ impl AppCore {
                     _ => None,
                 }
                 .or_else(|| i.username_hint.clone()),
-                access: if i.token.is_some() { i.access.clone() } else { AccessView::Idle },
+                access: if i.token.is_some() {
+                    i.access.clone()
+                } else {
+                    AccessView::Idle
+                },
                 session_error: i.session_error.clone(),
                 remember: prefs.remember_session,
                 persistence: i.persistence.clone(),
@@ -321,7 +332,11 @@ impl AppCore {
             form: FormDefaults {
                 title: prefs.last_title.clone(),
                 category: prefs.last_category.clone(),
-                audience_type: if prefs.audience_type.is_empty() { "0".into() } else { prefs.audience_type.clone() },
+                audience_type: if prefs.audience_type.is_empty() {
+                    "0".into()
+                } else {
+                    prefs.audience_type.clone()
+                },
                 title_max_chars: TITLE_MAX_CHARS,
             },
             app: AppInfo {
@@ -351,7 +366,8 @@ impl AppCore {
     }
 
     fn token(&self) -> AppResult<Secret> {
-        self.with_inner(|i| i.token.clone()).ok_or(AppError::NotLoggedIn)
+        self.with_inner(|i| i.token.clone())
+            .ok_or(AppError::NotLoggedIn)
     }
 
     // ------------------------------------------------------------ arranque --
@@ -377,10 +393,12 @@ impl AppCore {
                     i.session_gen += 1;
                     i.access = AccessView::Idle;
                 });
-                self.log.info("Sesión recuperada del almacén de credenciales del sistema.");
+                self.log
+                    .info("Sesión recuperada del almacén de credenciales del sistema.");
                 self.emit();
                 if let Err(e) = self.refresh_account().await {
-                    self.log.warn(format!("No se pudo comprobar la cuenta: {e}"));
+                    self.log
+                        .warn(format!("No se pudo comprobar la cuenta: {e}"));
                 }
             }
             Ok(Ok(None)) => {
@@ -459,7 +477,8 @@ impl AppCore {
                 }
             });
             if opened {
-                self.log.info("Se abrió el navegador del sistema con la página de Streamlabs.");
+                self.log
+                    .info("Se abrió el navegador del sistema con la página de Streamlabs.");
             } else {
                 self.log.warn("No se pudo abrir el navegador automáticamente. Copia el enlace y ábrelo manualmente.");
             }
@@ -484,10 +503,16 @@ impl AppCore {
 
         if let Some(p) = grant.platform.as_deref() {
             if !p.eq_ignore_ascii_case("tiktok") {
-                self.log.warn(format!("Streamlabs devolvió una sesión de «{p}», no de TikTok."));
+                self.log.warn(format!(
+                    "Streamlabs devolvió una sesión de «{p}», no de TikTok."
+                ));
             }
         }
-        let who = grant.username.as_deref().map(|u| format!(" como @{u}")).unwrap_or_default();
+        let who = grant
+            .username
+            .as_deref()
+            .map(|u| format!(" como @{u}"))
+            .unwrap_or_default();
         self.with_inner(|i| {
             i.token = Some(grant.token.clone());
             i.username_hint = grant.username.clone();
@@ -496,14 +521,17 @@ impl AppCore {
             i.busy = None;
             i.session_gen += 1;
         });
-        self.log.success(format!("Autenticación correcta{who}. Esto no garantiza acceso a LIVE."));
+        self.log.success(format!(
+            "Autenticación correcta{who}. Esto no garantiza acceso a LIVE."
+        ));
         self.emit();
 
         if self.prefs().remember_session {
             let _ = self.persist_token(grant.token.clone()).await;
         }
         if let Err(e) = self.refresh_account().await {
-            self.log.warn(format!("No se pudo comprobar el acceso a LIVE: {e}"));
+            self.log
+                .warn(format!("No se pudo comprobar el acceso a LIVE: {e}"));
         }
         Ok(())
     }
@@ -519,7 +547,8 @@ impl AppCore {
         match blocking(move || store.save(&token)).await? {
             Ok(()) => {
                 self.with_inner(|i| i.persistence = Persistence::Keyring);
-                self.log.info("Sesión guardada en el almacén de credenciales del sistema.");
+                self.log
+                    .info("Sesión guardada en el almacén de credenciales del sistema.");
                 self.emit();
                 Ok(())
             }
@@ -548,7 +577,9 @@ impl AppCore {
         if self.prefs().remember_session {
             let store = self.store.clone();
             if let Ok(Err(e)) = blocking(move || store.delete()).await {
-                self.log.warn(format!("No se pudo borrar la sesión del almacén del sistema: {e}"));
+                self.log.warn(format!(
+                    "No se pudo borrar la sesión del almacén del sistema: {e}"
+                ));
             }
         }
         self.emit();
@@ -568,7 +599,8 @@ impl AppCore {
             );
         }
         self.clear_session(None).await;
-        self.log.info("Sesión cerrada en este equipo (el token se ha borrado de la aplicación).");
+        self.log
+            .info("Sesión cerrada en este equipo (el token se ha borrado de la aplicación).");
         Ok(self.snapshot())
     }
 
@@ -582,13 +614,18 @@ impl AppCore {
                     return Err(e);
                 }
             } else {
-                self.log.info("La sesión se guardará en el almacén del sistema al iniciar sesión.");
+                self.log
+                    .info("La sesión se guardará en el almacén del sistema al iniciar sesión.");
             }
         } else {
             let store = self.store.clone();
             match blocking(move || store.delete()).await? {
-                Ok(()) => self.log.info("La sesión ya no se guardará y se borró del almacén del sistema."),
-                Err(e) => self.log.warn(format!("No se pudo borrar la sesión del almacén del sistema: {e}")),
+                Ok(()) => self
+                    .log
+                    .info("La sesión ya no se guardará y se borró del almacén del sistema."),
+                Err(e) => self.log.warn(format!(
+                    "No se pudo borrar la sesión del almacén del sistema: {e}"
+                )),
             }
             self.with_inner(|i| {
                 if i.persistence == Persistence::Keyring {
@@ -604,7 +641,8 @@ impl AppCore {
 
     async fn handle_auth_error(&self, e: &AppError) {
         if *e == AppError::TokenInvalid {
-            self.log.error("Streamlabs rechazó el token: la sesión se ha cerrado.");
+            self.log
+                .error("Streamlabs rechazó el token: la sesión se ha cerrado.");
             self.clear_session(Some(e)).await;
         }
     }
@@ -649,11 +687,18 @@ impl AppCore {
                 Ok(self.snapshot())
             }
             Err(e) => {
-                self.log.warn(format!("No se pudo comprobar el acceso a LIVE: {}", e.for_log()));
+                self.log.warn(format!(
+                    "No se pudo comprobar el acceso a LIVE: {}",
+                    e.for_log()
+                ));
                 if e == AppError::TokenInvalid {
                     self.handle_auth_error(&e).await;
                 } else {
-                    self.with_inner(|i| i.access = AccessView::Failed { error: ErrorInfo::from(&e) });
+                    self.with_inner(|i| {
+                        i.access = AccessView::Failed {
+                            error: ErrorInfo::from(&e),
+                        }
+                    });
                     self.emit();
                 }
                 Err(e)
@@ -670,12 +715,18 @@ impl AppCore {
         let opener = self.opener.clone();
         if blocking(move || opener.open(url)).await? {
             self.log.info(match page {
-                AccessPage::Apply => "Abierta la página de TikTok para solicitar el acceso a LIVE con Streamlabs.",
-                AccessPage::Status => "Abierta la página de TikTok para consultar la solicitud de acceso.",
+                AccessPage::Apply => {
+                    "Abierta la página de TikTok para solicitar el acceso a LIVE con Streamlabs."
+                }
+                AccessPage::Status => {
+                    "Abierta la página de TikTok para consultar la solicitud de acceso."
+                }
             });
             Ok(())
         } else {
-            Err(AppError::Validation(format!("No se pudo abrir el navegador. Visita {url}")))
+            Err(AppError::Validation(format!(
+                "No se pudo abrir el navegador. Visita {url}"
+            )))
         }
     }
 
@@ -720,7 +771,9 @@ impl AppCore {
     fn validate(&self, mut req: StartLiveRequest) -> AppResult<StartLiveRequest> {
         req.title = req.title.trim().to_string();
         if req.title.is_empty() {
-            return Err(AppError::Validation("Escribe un título para el LIVE.".into()));
+            return Err(AppError::Validation(
+                "Escribe un título para el LIVE.".into(),
+            ));
         }
         if req.title.chars().count() > TITLE_MAX_CHARS {
             return Err(AppError::Validation(format!(
@@ -728,7 +781,9 @@ impl AppCore {
             )));
         }
         if req.title.chars().any(char::is_control) {
-            return Err(AppError::Validation("El título contiene caracteres no válidos.".into()));
+            return Err(AppError::Validation(
+                "El título contiene caracteres no válidos.".into(),
+            ));
         }
         if req.category.id.len() > 128 || req.category.name.chars().count() > 200 {
             return Err(AppError::Validation("Categoría no válida.".into()));
@@ -761,18 +816,22 @@ impl AppCore {
             AccessView::Checking => Err(AppError::AccessCheckInProgress),
             AccessView::Done { account } => match &account.access.availability {
                 Availability::Confirmed => Ok(()),
-                Availability::NotAvailable { cause } => Err(AppError::LiveNotAvailable(cause_text(*cause).into())),
-                Availability::Contradictory { detail } => {
-                    Err(AppError::AccessUnconfirmed(format!("Streamlabs devolvió datos contradictorios ({detail}).")))
+                Availability::NotAvailable { cause } => {
+                    Err(AppError::LiveNotAvailable(cause_text(*cause).into()))
                 }
+                Availability::Contradictory { detail } => Err(AppError::AccessUnconfirmed(
+                    format!("Streamlabs devolvió datos contradictorios ({detail})."),
+                )),
                 Availability::Unknown { detail } => Err(AppError::AccessUnconfirmed(format!(
                     "la respuesta de Streamlabs no permite saberlo ({detail})."
                 ))),
             },
-            AccessView::Failed { .. } => {
-                Err(AppError::AccessUnconfirmed("la última comprobación falló.".into()))
-            }
-            AccessView::Idle => Err(AppError::AccessUnconfirmed("aún no se ha comprobado.".into())),
+            AccessView::Failed { .. } => Err(AppError::AccessUnconfirmed(
+                "la última comprobación falló.".into(),
+            )),
+            AccessView::Idle => Err(AppError::AccessUnconfirmed(
+                "aún no se ha comprobado.".into(),
+            )),
         })
     }
 
@@ -797,7 +856,8 @@ impl AppCore {
             Ok(creds) => {
                 self.log.protect(&creds.key);
                 if !(creds.server.starts_with("rtmp://") || creds.server.starts_with("rtmps://")) {
-                    self.log.warn("El servidor devuelto no empieza por rtmp:// ni rtmps://.");
+                    self.log
+                        .warn("El servidor devuelto no empieza por rtmp:// ni rtmps://.");
                 }
                 let started = now_ms();
                 let hint = creds.key.hint();
@@ -832,7 +892,10 @@ impl AppCore {
                 Ok(self.snapshot())
             }
             Err(e) => {
-                self.log.error(format!("No se pudieron obtener las credenciales: {}", e.for_log()));
+                self.log.error(format!(
+                    "No se pudieron obtener las credenciales: {}",
+                    e.for_log()
+                ));
                 self.handle_auth_error(&e).await;
                 self.emit();
                 Err(e)
@@ -862,12 +925,15 @@ impl AppCore {
             Err(_) if already_ended => {
                 self.with_inner(|i| i.stream = None);
                 self.update_prefs(|p| p.active_stream = None);
-                self.log.warn(format!("El LIVE {id} ya no existía en Streamlabs; se da por finalizado."));
+                self.log.warn(format!(
+                    "El LIVE {id} ya no existía en Streamlabs; se da por finalizado."
+                ));
                 self.emit();
                 Ok(self.snapshot())
             }
             Err(e) => {
-                self.log.error(format!("No se pudo finalizar el LIVE: {}", e.for_log()));
+                self.log
+                    .error(format!("No se pudo finalizar el LIVE: {}", e.for_log()));
                 self.handle_auth_error(&e).await;
                 self.emit();
                 Err(e)
@@ -890,7 +956,11 @@ impl AppCore {
 
     pub fn copy_text(&self, field: CopyField) -> AppResult<Secret> {
         let value = self.with_inner(|i| match field {
-            CopyField::Server => i.stream.as_ref().and_then(|s| s.server.clone()).map(Secret::new),
+            CopyField::Server => i
+                .stream
+                .as_ref()
+                .and_then(|s| s.server.clone())
+                .map(Secret::new),
             CopyField::Key => i.stream.as_ref().and_then(|s| s.key.clone()),
             CopyField::LoginUrl => i.pending.as_ref().map(|p| Secret::new(p.login_url.clone())),
         });

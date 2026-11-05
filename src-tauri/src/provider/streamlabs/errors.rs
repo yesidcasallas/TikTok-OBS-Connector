@@ -43,7 +43,10 @@ pub fn sanitize_message(msg: &str) -> String {
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut out: String = redact(&collapsed, &[]).chars().take(MAX_MESSAGE_CHARS).collect();
+    let mut out: String = redact(&collapsed, &[])
+        .chars()
+        .take(MAX_MESSAGE_CHARS)
+        .collect();
     if collapsed.chars().count() > MAX_MESSAGE_CHARS {
         out.push('…');
     }
@@ -100,7 +103,9 @@ fn from_code(code: &str, status: u16, message: Option<String>) -> Option<AppErro
 
 /// Error para una respuesta HTTP no exitosa.
 pub fn map_http_error(op: Op, status: u16, body: &[u8]) -> AppError {
-    let json: Option<Value> = serde_json::from_slice(body).ok().filter(|v: &Value| v.is_object());
+    let json: Option<Value> = serde_json::from_slice(body)
+        .ok()
+        .filter(|v: &Value| v.is_object());
     let message = json.as_ref().and_then(extract_message);
     if let Some(v) = &json {
         if let Some(code) = extract_code(v) {
@@ -114,17 +119,25 @@ pub fn map_http_error(op: Op, status: u16, body: &[u8]) -> AppError {
         return match status {
             400 | 401 | 404 | 410 | 422 => AppError::AuthExchangeRejected,
             403 if json.is_some() => AppError::AuthExchangeRejected,
-            403 => AppError::ProviderBlocked { status, detail: BLOCKED_DETAIL.into() },
+            403 => AppError::ProviderBlocked {
+                status,
+                detail: BLOCKED_DETAIL.into(),
+            },
             429 => AppError::RateLimited,
             500..=599 => AppError::ProviderUnavailable { status, message },
-            _ => AppError::ProviderUnexpected(format!("HTTP {status} en el intercambio del código")),
+            _ => {
+                AppError::ProviderUnexpected(format!("HTTP {status} en el intercambio del código"))
+            }
         };
     }
 
     match status {
         401 => AppError::TokenInvalid,
         403 if json.is_some() => AppError::ProviderForbidden { status, message },
-        403 => AppError::ProviderBlocked { status, detail: BLOCKED_DETAIL.into() },
+        403 => AppError::ProviderBlocked {
+            status,
+            detail: BLOCKED_DETAIL.into(),
+        },
         // Streamlabs Desktop interpreta 422 al iniciar como cuenta sancionada.
         422 if op == Op::Start => AppError::AccountRestricted { message },
         429 => AppError::RateLimited,
@@ -170,8 +183,15 @@ mod tests {
     fn generic_provider_error_is_not_presented_as_missing_permission() {
         for status in [400u16, 403, 500, 503] {
             let e = map_http_error(Op::Start, status, &body(json!({ "message": GENERIC })));
-            assert!(!matches!(e, AppError::PermissionDenied { .. }), "HTTP {status}: {e:?}");
-            assert_eq!(e.provider_detail(), Some(GENERIC), "HTTP {status} debe conservar el mensaje");
+            assert!(
+                !matches!(e, AppError::PermissionDenied { .. }),
+                "HTTP {status}: {e:?}"
+            );
+            assert_eq!(
+                e.provider_detail(),
+                Some(GENERIC),
+                "HTTP {status} debe conservar el mensaje"
+            );
             assert_eq!(e.http_status(), Some(status));
         }
         let e = map_http_error(Op::Start, 403, &body(json!({ "message": GENERIC })));
@@ -188,38 +208,99 @@ mod tests {
             400,
             &body(json!({"data": {"code": "user_has_no_live_auth", "message": "no auth"}})),
         );
-        assert_eq!(e, AppError::PermissionDenied { message: Some("no auth".into()) });
-        let e = body_error(200, &json!({"error": true, "data": {"code": "scope_not_authorized"}})).unwrap();
+        assert_eq!(
+            e,
+            AppError::PermissionDenied {
+                message: Some("no auth".into())
+            }
+        );
+        let e = body_error(
+            200,
+            &json!({"error": true, "data": {"code": "scope_not_authorized"}}),
+        )
+        .unwrap();
         assert!(matches!(e, AppError::PermissionDenied { .. }));
     }
 
     #[test]
     fn other_explicit_codes() {
-        assert_eq!(map_http_error(Op::Start, 400, &body(json!({"data": {"code": "user_already_live"}}))), AppError::AlreadyLive);
-        assert_eq!(map_http_error(Op::Info, 400, &body(json!({"error": {"code": "access_token_invalid"}}))), AppError::TokenInvalid);
-        assert_eq!(map_http_error(Op::Start, 400, &body(json!({"code": "rate_limit_exceeded"}))), AppError::RateLimited);
+        assert_eq!(
+            map_http_error(
+                Op::Start,
+                400,
+                &body(json!({"data": {"code": "user_already_live"}}))
+            ),
+            AppError::AlreadyLive
+        );
+        assert_eq!(
+            map_http_error(
+                Op::Info,
+                400,
+                &body(json!({"error": {"code": "access_token_invalid"}}))
+            ),
+            AppError::TokenInvalid
+        );
+        assert_eq!(
+            map_http_error(
+                Op::Start,
+                400,
+                &body(json!({"code": "rate_limit_exceeded"}))
+            ),
+            AppError::RateLimited
+        );
     }
 
     #[test]
     fn status_classification() {
-        assert_eq!(map_http_error(Op::Info, 401, b"Unauthorized."), AppError::TokenInvalid);
-        assert!(matches!(map_http_error(Op::Start, 403, b"<html>cf</html>"), AppError::ProviderBlocked { status: 403, .. }));
-        assert_eq!(map_http_error(Op::Start, 422, b"{}"), AppError::AccountRestricted { message: None });
-        assert!(matches!(map_http_error(Op::Info, 422, b"{}"), AppError::ProviderRejected { status: 422, .. }));
+        assert_eq!(
+            map_http_error(Op::Info, 401, b"Unauthorized."),
+            AppError::TokenInvalid
+        );
+        assert!(matches!(
+            map_http_error(Op::Start, 403, b"<html>cf</html>"),
+            AppError::ProviderBlocked { status: 403, .. }
+        ));
+        assert_eq!(
+            map_http_error(Op::Start, 422, b"{}"),
+            AppError::AccountRestricted { message: None }
+        );
+        assert!(matches!(
+            map_http_error(Op::Info, 422, b"{}"),
+            AppError::ProviderRejected { status: 422, .. }
+        ));
         assert_eq!(map_http_error(Op::End, 429, b""), AppError::RateLimited);
-        assert_eq!(map_http_error(Op::Categories, 500, b""), AppError::ProviderUnavailable { status: 500, message: None });
-        assert!(matches!(map_http_error(Op::Info, 302, b""), AppError::ProviderUnexpected(_)));
+        assert_eq!(
+            map_http_error(Op::Categories, 500, b""),
+            AppError::ProviderUnavailable {
+                status: 500,
+                message: None
+            }
+        );
+        assert!(matches!(
+            map_http_error(Op::Info, 302, b""),
+            AppError::ProviderUnexpected(_)
+        ));
     }
 
     #[test]
     fn exchange_failures() {
-        assert_eq!(map_http_error(Op::Exchange, 401, br#"{"message":""}"#), AppError::AuthExchangeRejected);
-        assert!(matches!(map_http_error(Op::Exchange, 503, b""), AppError::ProviderUnavailable { status: 503, .. }));
+        assert_eq!(
+            map_http_error(Op::Exchange, 401, br#"{"message":""}"#),
+            AppError::AuthExchangeRejected
+        );
+        assert!(matches!(
+            map_http_error(Op::Exchange, 503, b""),
+            AppError::ProviderUnavailable { status: 503, .. }
+        ));
     }
 
     #[test]
     fn messages_are_sanitized() {
-        let e = map_http_error(Op::Start, 400, &body(json!({"message": "bad key=live_123456 \n\t Bearer abc.def"})));
+        let e = map_http_error(
+            Op::Start,
+            400,
+            &body(json!({"message": "bad key=live_123456 \n\t Bearer abc.def"})),
+        );
         let d = e.provider_detail().unwrap();
         assert!(!d.contains("live_123456") && !d.contains("abc.def"));
         assert!(sanitize_message(&"x".repeat(1000)).chars().count() <= MAX_MESSAGE_CHARS + 1);

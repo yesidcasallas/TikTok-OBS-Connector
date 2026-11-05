@@ -39,7 +39,10 @@ async fn login_url_redirects_to_tiktok_login() {
 #[ignore]
 async fn exchange_with_invalid_code_is_rejected() {
     let err = provider()
-        .exchange_code(&Secret::new("codigo-invalido"), &Secret::new("verifier-invalido"))
+        .exchange_code(
+            &Secret::new("codigo-invalido"),
+            &Secret::new("verifier-invalido"),
+        )
         .await
         .unwrap_err();
     assert_eq!(err, AppError::AuthExchangeRejected);
@@ -50,13 +53,28 @@ async fn exchange_with_invalid_code_is_rejected() {
 async fn invalid_token_is_detected_on_every_endpoint() {
     let p = provider();
     let t = Secret::new("token-invalido-de-prueba");
-    assert_eq!(p.account_info(&t).await.unwrap_err(), AppError::TokenInvalid);
-    assert_eq!(p.search_categories(&t, "minecraft").await.unwrap_err(), AppError::TokenInvalid);
+    assert_eq!(
+        p.account_info(&t).await.unwrap_err(),
+        AppError::TokenInvalid
+    );
+    assert_eq!(
+        p.search_categories(&t, "minecraft").await.unwrap_err(),
+        AppError::TokenInvalid
+    );
     let req = StartLiveRequest {
         title: "prueba de contrato".into(),
-        category: Category { id: String::new(), name: "Otra".into() },
+        category: Category {
+            id: String::new(),
+            name: "Otra".into(),
+        },
         audience_type: "0".into(),
     };
-    assert_eq!(p.start_live(&t, &req).await.unwrap_err(), AppError::TokenInvalid);
-    assert_eq!(p.end_live(&t, "0").await.unwrap_err(), AppError::TokenInvalid);
+    assert_eq!(
+        p.start_live(&t, &req).await.unwrap_err(),
+        AppError::TokenInvalid
+    );
+    assert_eq!(
+        p.end_live(&t, "0").await.unwrap_err(),
+        AppError::TokenInvalid
+    );
 }

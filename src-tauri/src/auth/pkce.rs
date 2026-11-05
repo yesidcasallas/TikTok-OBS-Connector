@@ -31,7 +31,10 @@ impl Pkce {
         }
         bytes.zeroize();
         let challenge = challenge_for(&hex);
-        Ok(Pkce { verifier: Secret::new(hex), challenge })
+        Ok(Pkce {
+            verifier: Secret::new(hex),
+            challenge,
+        })
     }
 }
 
@@ -58,7 +61,9 @@ mod tests {
         let v = p.verifier.expose();
         assert_eq!(v.len(), 128);
         assert!((43..=128).contains(&v.len()));
-        assert!(v.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(v
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]

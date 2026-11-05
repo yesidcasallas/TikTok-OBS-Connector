@@ -48,7 +48,8 @@ pub fn run() {
                 std::env::consts::OS,
                 std::env::consts::ARCH
             ));
-            let provider = Arc::new(StreamlabsProvider::production()?.with_diagnostics(log.clone()));
+            let provider =
+                Arc::new(StreamlabsProvider::production()?.with_diagnostics(log.clone()));
             let core = Arc::new(AppCore::new(
                 provider,
                 Arc::new(KeyringStore),

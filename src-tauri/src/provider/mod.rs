@@ -26,10 +26,14 @@ pub struct AuthGrant {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum Field<T> {
-    Present { value: T },
+    Present {
+        value: T,
+    },
     Missing,
     /// `found` es el tipo JSON recibido (nunca el valor).
-    Invalid { found: String },
+    Invalid {
+        found: String,
+    },
 }
 
 impl<T> Field<T> {
@@ -167,7 +171,11 @@ pub trait LiveProvider: CallbackInterpreter {
 
     async fn search_categories(&self, token: &Secret, query: &str) -> AppResult<Vec<Category>>;
 
-    async fn start_live(&self, token: &Secret, req: &StartLiveRequest) -> AppResult<LiveCredentials>;
+    async fn start_live(
+        &self,
+        token: &Secret,
+        req: &StartLiveRequest,
+    ) -> AppResult<LiveCredentials>;
 
     async fn end_live(&self, token: &Secret, id: &str) -> AppResult<()>;
 }
