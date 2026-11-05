@@ -233,7 +233,8 @@ jobs:
           ls -la assets
 
           # Comprobar que están los paquetes de todas las plataformas.
-          for pattern in '*windows*-setup.exe' '*linux*.deb' '*linux*.AppImage' '*macos*aarch64*.dmg' '*macos*x64*.dmg'; do
+          # tauri-action identifica macOS como «darwin» (comprobado en el ensayo).
+          for pattern in '*windows_x64-setup.exe' '*linux_amd64.deb' '*linux_amd64.AppImage' '*darwin_aarch64.dmg' '*darwin_x64.dmg'; do
             if ! compgen -G "assets/$pattern" > /dev/null; then
               echo "::error::Falta un archivo que coincida con $pattern"
               exit 1

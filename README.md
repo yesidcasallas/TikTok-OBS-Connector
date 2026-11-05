@@ -2,7 +2,7 @@
 
 **Obtén el servidor RTMP y la clave de transmisión de TikTok LIVE para OBS iniciando sesión con tu cuenta de TikTok, sin copiar nada a mano desde LIVE Center.**
 
-TikTok OBS Connector es una aplicación de escritorio para **Windows 10/11**. Inicia sesión con TikTok **a través de Streamlabs** en tu navegador, crea la sesión LIVE con el título y la categoría que elijas y te entrega el **servidor** y la **clave** listos para pegar en OBS. Al terminar, finaliza el LIVE desde la propia aplicación.
+TikTok OBS Connector es una aplicación de escritorio para **Windows, Linux y macOS**. Inicia sesión con TikTok **a través de Streamlabs** en tu navegador, crea la sesión LIVE con el título y la categoría que elijas y te entrega el **servidor** y la **clave** listos para pegar en OBS. Al terminar, finaliza el LIVE desde la propia aplicación.
 
 Hecha con **Rust + Tauri 2** y **React + TypeScript**. Interfaz mínima, en español, con un instalador de unos pocos MB.
 
@@ -23,11 +23,15 @@ Hecha con **Rust + Tauri 2** y **React + TypeScript**. Interfaz mínima, en espa
 
 ## Instalación
 
-1. Descarga `TikTok-OBS-Connector-Setup.exe`, ya sea desde los artefactos de la [CI de GitHub Actions](../../actions) o compilándolo tú (ver más abajo). El instalador local queda en `dist/installer/`.
-2. Ejecútalo. Se instala para el usuario actual, sin permisos de administrador, e instala WebView2 si falta.
-3. El instalador no está firmado: si Windows SmartScreen avisa, pulsa «Más información → Ejecutar de todas formas».
+Descarga el archivo de tu sistema desde [**GitHub Releases**](../../releases) y comprueba la huella con `SHA256SUMS.txt`. No necesitas Rust ni Node.js.
 
-**Requisitos:** Windows 10/11 de 64 bits, OBS Studio y una cuenta de TikTok con acceso a LIVE mediante Streamlabs.
+| Sistema | Archivo | Notas |
+|---|---|---|
+| Windows 10/11 x64 | `…_windows_x64-setup.exe` | Instalador para el usuario actual; instala WebView2 si falta. Sin firmar: SmartScreen → «Ejecutar de todas formas». |
+| Linux x86_64 | `…_linux_amd64.AppImage` / `…_linux_amd64.deb` | glibc 2.35 o superior (Ubuntu 22.04+). El paquete `.deb` se llama `tik-tok-obs-connector`. |
+| macOS ARM64 / x86_64 | `…_darwin_aarch64.dmg` / `…_darwin_x64.dmg` | Sin notarizar: Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente». Compilado en CI, aún sin probar en un Mac. |
+
+**Requisitos:** OBS Studio y una cuenta de TikTok con acceso a LIVE mediante Streamlabs, que puedes solicitar desde la app.
 
 ## Uso
 
