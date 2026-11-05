@@ -2,8 +2,8 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TikTok OBS Connector",
   "mainBinaryName": "TikTok-OBS-Connector",
-  "version": "2.1.0",
-  "identifier": "com.tiktokobsconnector.app",
+  "version": "0.1.0-beta.1",
+  "identifier": "com.tiktokobsconnector.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1430",
@@ -30,7 +30,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis",
+      "deb",
+      "appimage",
+      "app",
+      "dmg"
+    ],
     "publisher": "TikTok OBS Connector",
     "copyright": "© 2026 TikTok OBS Connector. GPL-3.0-or-later. No afiliado a TikTok ni a Streamlabs.",
     "category": "Video",
@@ -50,10 +56,25 @@
       },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["Spanish", "English"],
+        "languages": [
+          "Spanish",
+          "English"
+        ],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico"
       }
+    },
+    "linux": {
+      "deb": {
+        "section": "video"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "10.15"
     }
   }
 }

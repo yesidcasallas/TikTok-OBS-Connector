@@ -1,0 +1,252 @@
+# Publica una versión en GitHub Releases al subir una etiqueta `v*`.
+#
+#   git tag -a v0.1.0-beta.2 -m "v0.1.0-beta.2" && git push origin v0.1.0-beta.2
+#
+# Flujo: verify → create-release (borrador) → build (4 plataformas) → publish.
+# La release solo deja de ser borrador si TODAS las compilaciones terminan bien.
+# Las versiones con sufijo (`-beta.N`, `-rc.N`…) se publican como Pre-release.
+#
+# Lanzamiento manual (workflow_dispatch) = ensayo: verifica y compila todo,
+# sube los paquetes como artefactos del workflow y NO publica nada.
+#
+# Notas: si existe `.github/releases/<etiqueta>.md`, su primera línea es el
+# título y el resto la descripción; si no, se generan automáticamente.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: "1.98.1"
+  NODE_VERSION: "22"
+  CARGO_TERM_COLOR: always
+  ASSET_PATTERN: "TikTok-OBS-Connector_[version]_[platform]_[arch][setup][ext]"
+
+jobs:
+  verify:
+    name: Verificar (fmt, clippy, pruebas)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Dependencias del sistema (Tauri en Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+
+      - name: Versión coherente con la etiqueta
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for file in package.json src-tauri/tauri.conf.json; do
+            v="$(node -p "require('./$file').version")"
+            if [ "$v" != "$tag" ]; then echo "::error file=$file::La versión $v no coincide con la etiqueta $GITHUB_REF_NAME"; exit 1; fi
+          done
+          v="$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)"
+          if [ "$v" != "$tag" ]; then echo "::error file=src-tauri/Cargo.toml::La versión $v no coincide con la etiqueta $GITHUB_REF_NAME"; exit 1; fi
+
+      - name: Instalar dependencias del frontend
+        run: npm ci
+
+      - name: Pruebas y compilación del frontend
+        run: |
+          npm test
+          npm run build
+
+      - name: Formato (rustfmt)
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Pruebas de Rust
+        working-directory: src-tauri
+        run: cargo test --locked
+
+  create-release:
+    name: Crear release (borrador)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Crear borrador (sin sobrescribir releases existentes)
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$TAG\") | .id")"
+          if [ -n "$existing" ]; then
+            echo "::error::Ya existe una release (o borrador) para $TAG. No se sobrescribe."
+            exit 1
+          fi
+          notes=".github/releases/$TAG.md"
+          extra=()
+          if [ -f "$notes" ]; then
+            title="$(head -n1 "$notes" | sed 's/^#[[:space:]]*//')"
+            tail -n +2 "$notes" > body.md
+          else
+            title="$TAG"
+            : > body.md
+            extra=(--generate-notes)
+          fi
+          pre=()
+          case "$TAG" in *-*) pre=(--prerelease) ;; esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$title" --notes-file body.md "${pre[@]}" "${extra[@]}"
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -n1)"
+          test -n "$id"
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Compilar (${{ matrix.name }})
+    needs: [verify, create-release]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64
+            os: windows-latest
+            args: ""
+            rust_targets: ""
+          - name: Linux x86_64
+            os: ubuntu-22.04
+            args: ""
+            rust_targets: ""
+          - name: macOS ARM64
+            os: macos-latest
+            args: "--target aarch64-apple-darwin"
+            rust_targets: aarch64-apple-darwin
+          - name: macOS x86_64
+            os: macos-latest
+            args: "--target x86_64-apple-darwin"
+            rust_targets: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Dependencias del sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.os }}-${{ matrix.rust_targets }}
+
+      - name: Instalar dependencias del frontend
+        run: npm ci
+
+      - name: Compilar y adjuntar a la release
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+          releaseAssetNamePattern: ${{ env.ASSET_PATTERN }}
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
+          retryAttempts: 1
+
+  publish:
+    name: Checksums y publicación
+    needs: [create-release, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Descargar archivos, generar SHA256SUMS.txt y publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY/releases"
+          mkdir assets
+          gh api "$api/$RELEASE_ID/assets" --paginate --jq '.[] | "\(.id)\t\(.name)"' > assets.tsv
+          while IFS=$'\t' read -r id name; do
+            gh api -H "Accept: application/octet-stream" "$api/assets/$id" > "assets/$name"
+          done < assets.tsv
+          echo "Archivos de la release:"
+          ls -la assets
+
+          # Comprobar que están los paquetes de todas las plataformas.
+          for pattern in '*windows*-setup.exe' '*linux*.deb' '*linux*.AppImage' '*macos*aarch64*.dmg' '*macos*x64*.dmg'; do
+            if ! compgen -G "assets/$pattern" > /dev/null; then
+              echo "::error::Falta un archivo que coincida con $pattern"
+              exit 1
+            fi
+          done
+
+          (cd assets && sha256sum -- * > ../SHA256SUMS.txt)
+          cat SHA256SUMS.txt
+          gh api --method POST -H "Content-Type: text/plain" \
+            "https://uploads.github.com/$api/$RELEASE_ID/assets?name=SHA256SUMS.txt" \
+            --input SHA256SUMS.txt --jq '.name'
+
+          prerelease=false
+          case "$TAG" in *-*) prerelease=true ;; esac
+          gh api --method PATCH "$api/$RELEASE_ID" -F draft=false -F prerelease="$prerelease" \
+            --jq '"Publicada: \(.html_url) · prerelease=\(.prerelease)"'

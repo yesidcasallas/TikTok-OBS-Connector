@@ -44,7 +44,7 @@ src-tauri/src/
   provider/mod.rs        Trait LiveProvider, independiente del proveedor.
   provider/streamlabs/   endpoints.rs (URLs y parámetros) · client.rs · models.rs · errors.rs
   security/              Secret, redacción de registros, almacén de credenciales (keyring).
-  prefs.rs               Preferencias no sensibles (%APPDATA%\com.tiktokobsconnector.app).
+  prefs.rs               Preferencias no sensibles (%APPDATA%\com.tiktokobsconnector.desktop).
 ```
 
 ## Reglas obligatorias
@@ -89,8 +89,16 @@ src-tauri/src/
 3. Tipos en `src/types.ts` y función en `src/api.ts`.
 4. Pruebas en `app_core/tests.rs` con `MockServer` (wiremock) y el navegador simulado `FakeBrowser`.
 
+## Publicación
+
+- `.github/workflows/release.yml` publica en GitHub Releases al subir una etiqueta `v*`. El orden es `verify` → `create-release` (borrador) → `build` (matriz de 4 plataformas con `tauri-action`) → `publish` (`SHA256SUMS.txt` y fin del borrador). Con sufijo (`-beta.N`) sale como Pre-release.
+- Las acciones están fijadas por SHA y Rust en `RUST_TOOLCHAIN`. Al actualizarlas, resuelva el SHA de la etiqueta y mantenga el comentario con la versión.
+- La versión debe coincidir en `package.json`, `package-lock.json`, `Cargo.toml`, `Cargo.lock` y `tauri.conf.json`; `verify` lo comprueba.
+- Las notas van en `.github/releases/<etiqueta>.md` (primera línea = título). No afirme funciones ni plataformas sin verificarlas.
+- Nunca reutilice ni mueva una etiqueta publicada: si algo falla, publique la siguiente beta.
+
 ## Git
 
 - `main` es la rama estable; `develop`, la de integración. Trabaje en ramas desde `develop` y vuelva con pull request.
 - No versione binarios: `dist/` está en `.gitignore`. El instalador se genera con CI o con `scripts/package-dist.sh`.
-- La versión aparece en `package.json`, `src-tauri/Cargo.toml` y `src-tauri/tauri.conf.json`: cámbiela en los tres a la vez.
+- No añada líneas `Co-Authored-By` ni atribuciones a herramientas en los commits ni en los PR: el propietario debe ser el único contribuidor.

@@ -1,11 +1,16 @@
 name: Compilar para Windows
 
+# Integración continua en Windows (pruebas + instalador como artefacto).
+# Las versiones publicadas las genera release.yml al subir una etiqueta v*.
+
 on:
   push:
     branches: [main, develop]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:

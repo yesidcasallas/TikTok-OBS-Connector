@@ -64,7 +64,7 @@ La app lee `reason`, `can_be_live` y `application_status.status` de `/tiktok/inf
 
 Streamlabs Desktop solo pide credenciales con la cuenta aprobada, y esta app hace lo mismo. Cuando el proveedor devuelve un error genérico (por ejemplo, `Unable to go live. Please try again later`), la app muestra su mensaje original y el código HTTP **sin afirmar una causa**. Solo dice «sin permiso» si Streamlabs envía un código explícito (`user_has_no_live_auth`, `scope_not_authorized`, `scope_permission_missed`).
 
-**Diagnóstico:** `%LOCALAPPDATA%\com.tiktokobsconnector.app\logs\diagnostico.log` registra la operación, el código HTTP, el tipo de contenido, la duración, los campos de estado y los errores saneados. Nunca registra tokens, claves, cookies, cuerpos completos ni URLs con credenciales.
+**Diagnóstico:** `%LOCALAPPDATA%\com.tiktokobsconnector.desktop\logs\diagnostico.log` registra la operación, el código HTTP, el tipo de contenido, la duración, los campos de estado y los errores saneados. Nunca registra tokens, claves, cookies, cuerpos completos ni URLs con credenciales.
 
 La aplicación se identifica con su propio User-Agent y con la plataforma real (`device_platform=win32`, el mismo valor que envía Streamlabs Desktop en Windows).
 
@@ -108,6 +108,27 @@ bash scripts/package-dist.sh x86_64-pc-windows-msvc
 ```
 
 GitHub Actions (`.github/workflows/build-windows.yml`) ejecuta las pruebas y compila el instalador en cada push a `main` o `develop`, y lo publica como artefacto.
+
+### Publicar una versión
+
+Las versiones se publican en [GitHub Releases](../../releases) con `.github/workflows/release.yml` (`tauri-action`). Sigue *Semantic Versioning*: las versiones con sufijo (`-beta.N`, `-rc.N`) salen como **Pre-release**.
+
+1. Sube la versión en `package.json` (y `package-lock.json`), `src-tauri/Cargo.toml` y `src-tauri/tauri.conf.json`, y ejecuta `cargo check` para actualizar `Cargo.lock`. El workflow falla si no coinciden con la etiqueta.
+2. Escribe las notas en `.github/releases/vX.Y.Z[-beta.N].md`: la primera línea es el título y el resto la descripción. Si no existe el archivo, GitHub genera las notas.
+3. Opcional, pero recomendado: lanza un ensayo en **Actions → Release → Run workflow**. Compila las cuatro plataformas sin publicar nada y deja los paquetes como artefactos.
+4. Haz el commit, integra en `main` y publica la etiqueta:
+
+   ```bash
+   git tag -a v0.1.0-beta.2 -m "v0.1.0-beta.2"
+   git push origin v0.1.0-beta.2
+   ```
+
+El workflow:
+
+1. Verifica el proyecto (`cargo fmt --check`, `clippy -D warnings` y las pruebas de Rust y del frontend).
+2. Crea la release como borrador. Nunca sobrescribe una existente.
+3. Compila Windows x64, Linux x64, macOS ARM64 y macOS x86_64.
+4. Solo si todo termina bien, añade `SHA256SUMS.txt` y la publica.
 
 ### Ramas
 
