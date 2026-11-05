@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Política de privacidad · Virelo</title>
+<link rel="icon" href="icono.png">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html"><img src="icono.png" alt="" width="32" height="32"> Virelo</a>
+  <nav><a href="privacidad.html">Privacidad</a> <a href="terminos.html">Términos</a></nav>
+</header>
+<main class="doc">
+<h1>Política de privacidad de Virelo (borrador)</h1>
+<blockquote><strong>Borrador sin validez legal.</strong> Refleja el comportamiento real de Virelo <code>0.1.0-beta.2</code>. Antes de publicarlo hay que completar <code>[ENTRE CORCHETES]</code> y revisarlo con un abogado; en Colombia aplica la Ley 1581 de 2012 de protección de datos personales. Si se activa la integración propia con TikTok Login Kit y un servidor de Virelo, hay que actualizar las secciones marcadas con ⚑.</blockquote>
+<p><strong>Responsable:</strong> <code>[TITULAR]</code>, <code>[DIRECCIÓN]</code>, <code>[CONTACTO]</code> <strong>Última actualización:</strong> <code>[FECHA]</code></p>
+<h2>1. Qué es Virelo</h2>
+<p>Virelo es una aplicación de escritorio para Windows, macOS y Linux que ayuda a emitir en TikTok LIVE con OBS Studio. Hoy funciona con la <strong>integración de Streamlabs</strong>: iniciar sesión, consultar si tu cuenta puede emitir, crear o finalizar la sesión LIVE y obtener el servidor y la clave de transmisión se hacen a través de Streamlabs. Virelo no está afiliado a TikTok, OBS Project ni Streamlabs.</p>
+<h2>2. Datos que trata Virelo y dónde quedan</h2>
+<p>Virelo <strong>no tiene servidores propios</strong> ⚑: todo lo que se indica a continuación queda <strong>en tu ordenador</strong>.</p>
+<table><thead><tr><th>Dato</th><th>Para qué</th><th>Dónde y cuánto tiempo</th></tr></thead><tbody><tr><td>Token de sesión de Streamlabs</td><td>Hacer las peticiones a Streamlabs en tu nombre</td><td>En memoria mientras la app está abierta. Solo si marcas «Recordar la sesión», en el almacén de credenciales del sistema (Administrador de credenciales de Windows, Keychain o Secret Service) hasta que cierres la sesión</td></tr><tr><td>Nombre de usuario de TikTok y estado del acceso a LIVE (por ejemplo, <code>reason</code>, <code>can_be_live</code> o <code>application_status</code>)</td><td>Mostrarte con qué cuenta trabajas y si puede emitir</td><td>En memoria. También aparecen en el registro de diagnóstico local (sección 4)</td></tr><tr><td>Servidor RTMP y clave de transmisión</td><td>Que los copies en OBS</td><td><strong>Solo en memoria.</strong> Nunca se guardan en disco. Se copian al portapapeles cuando pulsas «Copiar»</td></tr><tr><td>Preferencias: recordar sesión, último título y categoría, tipo de audiencia, identificador y título del LIVE activo</td><td>Recordar tus opciones y poder finalizar un LIVE tras reiniciar</td><td>Archivo <code>preferences.json</code> en la carpeta de configuración de la app, hasta que lo borres o desinstales</td></tr><tr><td>Registro de diagnóstico</td><td>Ayudarte a resolver problemas</td><td>Archivo <code>diagnostico.log</code> local, de 512 KiB como máximo más una copia anterior. No contiene tokens, claves, códigos de autorización ni cookies</td></tr></tbody></table>
+<p>Virelo <strong>no</strong> recoge contraseñas: tus credenciales de TikTok se escriben solo en la página de Streamlabs o TikTok, en tu navegador. Tampoco recoge contactos, ubicación, vídeos, mensajes, datos de pago ni estadísticas de uso, y <strong>no incluye analítica, publicidad ni telemetría</strong>.</p>
+<h2>3. Con quién se comunica Virelo</h2>
+<ul><li><strong>Streamlabs</strong> (<code>streamlabs.com</code>): inicio de sesión y API para el estado del acceso, la creación y el fin del LIVE y la búsqueda de categorías. Se aplica la <a href="https://streamlabs.com/privacy">política de privacidad de Streamlabs</a>.</li><li><strong>TikTok</strong> (<code>tiktok.com</code>): Virelo abre en tu navegador las páginas oficiales de inicio de sesión y de solicitud de acceso a LIVE. Se aplica la <a href="https://www.tiktok.com/legal/privacy-policy">política de privacidad de TikTok</a>.</li><li><strong>GitHub</strong>: solo si descargas Virelo o sus actualizaciones desde GitHub Releases.</li></ul>
+<p>Virelo no vende ni comparte tus datos con terceros.</p>
+<h2>4. Registro de diagnóstico</h2>
+<p>Registra la operación, el código HTTP, el tipo de contenido, la duración, los campos de estado del acceso y los mensajes de error sin datos sensibles. También puede contener tu nombre de usuario de TikTok. Solo sale de tu ordenador si tú lo compartes, por ejemplo con «Copiar diagnóstico» al informar de un error.</p>
+<p>Ubicaciones:</p>
+<ul><li><strong>Windows:</strong> <code>%LOCALAPPDATA%\com.virelo.desktop\logs\diagnostico.log</code></li><li><strong>macOS:</strong> <code>~/Library/Logs/com.virelo.desktop/diagnostico.log</code></li><li><strong>Linux:</strong> <code>~/.local/share/com.virelo.desktop/logs/diagnostico.log</code></li></ul>
+<h2>5. Tus derechos y cómo borrar tus datos</h2>
+<ul><li><strong>«Cerrar sesión»</strong> borra el token de la app y del almacén de credenciales.</li><li><strong>Preferencias y registro:</strong> borra la carpeta <code>com.virelo.desktop</code> de configuración y de registros, o desinstala la app.</li><li><strong>Autorización a Streamlabs:</strong> puedes revocarla desde tu cuenta de Streamlabs o de TikTok.</li><li>Para consultas, rectificación o supresión: <code>[CONTACTO]</code>.</li></ul>
+<h2>6. Menores</h2>
+<p>Virelo no está dirigido a menores de <code>[EDAD MÍNIMA]</code> años. TikTok exige una edad mínima para emitir en LIVE.</p>
+<h2>7. Cambios</h2>
+<p>Publicaremos los cambios de esta política en <code>https://[DOMINIO]/privacidad</code> con su fecha.</p>
+</main>
+<footer>Virelo no está afiliado a TikTok, OBS Project ni Streamlabs. · <a href="privacidad.html">Privacidad</a> · <a href="terminos.html">Términos</a></footer>
+</body>
+</html>
