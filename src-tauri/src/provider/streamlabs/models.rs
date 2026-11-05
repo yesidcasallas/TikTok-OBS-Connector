@@ -1,10 +1,18 @@
-//! Interpretación tolerante de las respuestas de Streamlabs.
+//! Interpretación de las respuestas de Streamlabs.
 //!
-//! Los tipos de referencia están en `app/services/platforms/tiktok/api.ts` de
-//! Streamlabs Desktop (`ITikTokLiveScopeResponse`, `ETikTokLiveScopeReason`,
+//! Tipos de referencia: `app/services/platforms/tiktok/api.ts` de Streamlabs
+//! Desktop (`ITikTokLiveScopeResponse`, `ETikTokLiveScopeReason`,
 //! `ITikTokAudienceControlsInfo`, `ITikTokStartStreamResponse`).
+//!
+//! Los campos de estado se leen de forma **estricta**: `reason` debe ser un
+//! entero, `can_be_live` un booleano y `application_status.status` una cadena.
+//! Un campo ausente o `null` es [`Field::Missing`]; un tipo distinto es
+//! [`Field::Invalid`]. Ninguno de los dos se interpreta como «no aprobada».
 
-use crate::provider::{AccountInfo, AudienceControls, AudienceOption, Category, LiveAccess};
+use crate::provider::{
+    AccessCheck, AccountInfo, AudienceControls, AudienceOption, Availability, Category, Field, LiveScope,
+    UnavailableCause,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -56,20 +64,6 @@ pub mod reason {
     pub const APPROVED_OBS: i64 = 2;
 }
 
-pub fn as_i64(v: &Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_str()?.trim().parse().ok())
-}
-
-pub fn as_bool(v: &Value) -> Option<bool> {
-    v.as_bool()
-        .or_else(|| v.as_i64().map(|n| n != 0))
-        .or_else(|| match v.as_str()?.trim() {
-            "true" | "1" => Some(true),
-            "false" | "0" => Some(false),
-            _ => None,
-        })
-}
-
 pub fn as_string(v: &Value) -> Option<String> {
     match v {
         Value::String(s) => Some(s.trim().to_string()),
@@ -78,32 +72,135 @@ pub fn as_string(v: &Value) -> Option<String> {
     }
 }
 
-/// Réplica de `convertScope` de Streamlabs Desktop, sin convertir valores
-/// desconocidos en "denegado".
-pub fn convert_scope(
-    reason: Option<i64>,
-    application_status: Option<&str>,
-    has_user: bool,
-    has_info: bool,
-) -> LiveAccess {
-    if application_status == Some("never_applied") && reason != Some(reason::APPROVED_OBS) {
-        return LiveAccess::NeverApplied;
+fn json_type(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "booleano",
+        Value::Number(_) => "número",
+        Value::String(_) => "cadena",
+        Value::Array(_) => "lista",
+        Value::Object(_) => "objeto",
     }
-    match reason {
-        Some(reason::APPROVED) => LiveAccess::Approved,
-        Some(reason::APPROVED_OBS) => LiveAccess::Legacy,
-        Some(reason::RELOG) => LiveAccess::Relog,
-        Some(reason::NOT_APPROVED) => {
-            if application_status == Some("rejected") {
-                LiveAccess::Rejected
-            } else {
-                LiveAccess::NotApproved
-            }
-        }
-        Some(_) => LiveAccess::Unknown,
+}
+
+pub fn field_i64(v: Option<&Value>) -> Field<i64> {
+    match v {
+        None | Some(Value::Null) => Field::Missing,
+        Some(Value::Number(n)) => match n.as_i64() {
+            Some(value) => Field::Present { value },
+            None => Field::Invalid { found: "número no entero".into() },
+        },
+        Some(other) => Field::Invalid { found: json_type(other).into() },
+    }
+}
+
+pub fn field_bool(v: Option<&Value>) -> Field<bool> {
+    match v {
+        None | Some(Value::Null) => Field::Missing,
+        Some(Value::Bool(value)) => Field::Present { value: *value },
+        Some(other) => Field::Invalid { found: json_type(other).into() },
+    }
+}
+
+/// `application_status.status` (objeto anidado).
+pub fn field_application_status(v: Option<&Value>) -> Field<String> {
+    match v {
+        None | Some(Value::Null) => Field::Missing,
+        Some(Value::Object(o)) => match o.get("status") {
+            None | Some(Value::Null) => Field::Missing,
+            Some(Value::String(s)) if s.trim().is_empty() => Field::Missing,
+            Some(Value::String(s)) => Field::Present { value: s.trim().chars().take(40).collect() },
+            Some(other) => Field::Invalid { found: json_type(other).into() },
+        },
+        Some(other) => Field::Invalid { found: format!("{} (se esperaba objeto)", json_type(other)) },
+    }
+}
+
+/// Texto breve de un campo para registros y diagnóstico (sin valores sensibles).
+pub fn describe<T: std::fmt::Display>(f: &Field<T>) -> String {
+    match f {
+        Field::Present { value } => value.to_string(),
+        Field::Missing => "ausente".into(),
+        Field::Invalid { found } => format!("tipo inesperado ({found})"),
+    }
+}
+
+/// Resumen de los campos de estado para el registro de diagnóstico.
+pub fn summary(a: &AccessCheck) -> String {
+    format!(
+        "reason={} · can_be_live={} · application_status={} · user={}",
+        describe(&a.reason),
+        describe(&a.can_be_live),
+        describe(&a.application_status),
+        if a.user_present { "presente" } else { "ausente" }
+    )
+}
+
+/// Ámbito según `reason` y `application_status` (réplica de `convertScope`
+/// de Streamlabs Desktop, sin convertir valores desconocidos en «denegada»).
+pub fn scope_of(reason_f: &Field<i64>, app: &Field<String>, user_present: bool, info_present: bool) -> LiveScope {
+    let app_status = app.value().map(String::as_str);
+    let reason_v = reason_f.value().copied();
+    if app_status == Some("never_applied") && reason_v != Some(reason::APPROVED_OBS) {
+        return LiveScope::NeverApplied;
+    }
+    match reason_f {
+        Field::Present { value } => match *value {
+            reason::APPROVED => LiveScope::Approved,
+            reason::APPROVED_OBS => LiveScope::Legacy,
+            reason::RELOG => LiveScope::Relog,
+            reason::NOT_APPROVED if app_status == Some("rejected") => LiveScope::Rejected,
+            reason::NOT_APPROVED => LiveScope::NotApproved,
+            _ => LiveScope::Unknown,
+        },
         // Desktop: sin `user` pero con `info` (y sin reason) => volver a iniciar sesión.
-        None if !has_user && has_info => LiveAccess::Relog,
-        None => LiveAccess::Unknown,
+        Field::Missing if !user_present && info_present => LiveScope::Relog,
+        Field::Missing | Field::Invalid { .. } => LiveScope::Unknown,
+    }
+}
+
+/// Conclusión sobre el permiso de emisión.
+///
+/// | ámbito \ can_be_live | true | false | ausente/inválido |
+/// |---|---|---|---|
+/// | aprobada | confirmado | contradictorio | confirmado (Desktop solo usa `reason`) |
+/// | no aprobada / nunca solicitada / rechazada | contradictorio | no disponible | no disponible |
+/// | legacy / volver a iniciar sesión | no disponible | no disponible | no disponible |
+/// | desconocido | confirmado (la referencia usa `can_be_live`) | no disponible | **desconocido** |
+pub fn availability_of(scope: LiveScope, can: &Field<bool>, reason_f: &Field<i64>) -> Availability {
+    let can_v = can.value().copied();
+    match scope {
+        LiveScope::Approved => match can_v {
+            Some(false) => Availability::Contradictory {
+                detail: "reason=1 (aprobada) pero can_be_live=false".into(),
+            },
+            _ => Availability::Confirmed,
+        },
+        LiveScope::NotApproved | LiveScope::NeverApplied | LiveScope::Rejected => match can_v {
+            Some(true) => Availability::Contradictory {
+                detail: "la solicitud figura como no aprobada pero can_be_live=true".into(),
+            },
+            _ => Availability::NotAvailable {
+                cause: match scope {
+                    LiveScope::NeverApplied => UnavailableCause::NeverApplied,
+                    LiveScope::Rejected => UnavailableCause::Rejected,
+                    _ => UnavailableCause::NotApproved,
+                },
+            },
+        },
+        LiveScope::Legacy => Availability::NotAvailable { cause: UnavailableCause::Legacy },
+        LiveScope::Relog => Availability::NotAvailable { cause: UnavailableCause::Relog },
+        LiveScope::Unknown => match can_v {
+            Some(true) => Availability::Confirmed,
+            Some(false) => Availability::NotAvailable { cause: UnavailableCause::CannotGoLive },
+            None => Availability::Unknown {
+                detail: format!(
+                    "reason {} y can_be_live {}",
+                    describe(reason_f),
+                    describe(can)
+                ),
+            },
+        },
     }
 }
 
@@ -130,7 +227,7 @@ pub fn parse_audience(v: Option<&Value>) -> AudienceControls {
     let Some(obj) = v.filter(|v| v.is_object()) else {
         return default_audience();
     };
-    let disabled = obj.get("disable").and_then(as_bool).unwrap_or(false);
+    let disabled = obj.get("disable").and_then(Value::as_bool).unwrap_or(false);
     let mut options: Vec<AudienceOption> = obj
         .get("types")
         .and_then(Value::as_array)
@@ -162,31 +259,39 @@ pub fn parse_audience(v: Option<&Value>) -> AudienceControls {
     AudienceControls { disabled, default_value, options }
 }
 
-pub fn parse_account(v: &Value, now_ms: u64) -> AccountInfo {
-    let reason = v.get("reason").and_then(as_i64);
-    let app = v.get("application_status").filter(|a| a.is_object());
-    let application_status = app
-        .and_then(|a| a.get("status"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let application_timestamp = app.and_then(|a| a.get("timestamp")).and_then(as_string);
+/// Interpreta `/tiktok/info` (estado HTTP y tipo de contenido ya validados).
+pub fn parse_account(v: &Value, http_status: u16, duration_ms: u64, now_ms: u64) -> AccountInfo {
     let user = v.get("user").filter(|u| u.is_object());
-    let has_info = v.get("info").map(|i| !i.is_null()).unwrap_or(false);
-    let live_access = convert_scope(reason, application_status.as_deref(), user.is_some(), has_info);
+    let info_present = v.get("info").map(|i| !i.is_null()).unwrap_or(false);
+    let reason_f = field_i64(v.get("reason"));
+    let can = field_bool(v.get("can_be_live"));
+    let app = field_application_status(v.get("application_status"));
+    let scope = scope_of(&reason_f, &app, user.is_some(), info_present);
+    let availability = availability_of(scope, &can, &reason_f);
     AccountInfo {
         username: user
             .and_then(|u| u.get("username"))
-            .and_then(as_string)
-            .unwrap_or_default(),
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
         display_name: user
             .and_then(|u| u.get("display_name"))
-            .and_then(as_string)
-            .filter(|s| !s.is_empty()),
-        live_access,
-        can_be_live: v.get("can_be_live").and_then(as_bool),
-        application_status,
-        application_timestamp,
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        access: AccessCheck {
+            reason: reason_f,
+            can_be_live: can,
+            application_status: app,
+            user_present: user.is_some(),
+            scope,
+            availability,
+        },
         audience: parse_audience(v.get("audience_controls_info")),
+        http_status,
+        duration_ms,
         checked_at_ms: now_ms,
     }
 }
@@ -209,58 +314,112 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn scope_matrix_matches_streamlabs_desktop() {
-        use LiveAccess::*;
-        assert_eq!(convert_scope(Some(1), Some("approved"), true, true), Approved);
-        assert_eq!(convert_scope(Some(2), Some("never_applied"), true, true), Legacy);
-        assert_eq!(convert_scope(Some(1), Some("never_applied"), true, true), NeverApplied);
-        assert_eq!(convert_scope(Some(0), None, true, true), NotApproved);
-        assert_eq!(convert_scope(Some(0), Some("rejected"), true, true), Rejected);
-        assert_eq!(convert_scope(Some(-1), None, true, true), Relog);
-        assert_eq!(convert_scope(None, None, false, true), Relog);
-        assert_eq!(convert_scope(None, None, true, false), Unknown);
-        assert_eq!(convert_scope(Some(7), None, true, true), Unknown);
+    fn access(v: Value) -> AccessCheck {
+        parse_account(&v, 200, 1, 0).access
     }
 
     #[test]
-    fn parses_full_info_response() {
-        let v = json!({
-            "platform": "tiktok",
-            "reason": 1,
-            "can_be_live": true,
-            "user": { "username": "creadora", "display_name": "Creadora", "open_id": "x" },
-            "info": [],
-            "application_status": { "status": "approved", "timestamp": null },
-            "audience_controls_info": {
-                "disable": false, "info_type": 0,
-                "types": [ { "key": 0, "label": "Everyone" }, { "key": 1, "label": null } ]
-            }
-        });
-        let a = parse_account(&v, 42);
-        assert_eq!(a.username, "creadora");
-        assert_eq!(a.display_name.as_deref(), Some("Creadora"));
-        assert_eq!(a.live_access, LiveAccess::Approved);
-        assert_eq!(a.can_be_live, Some(true));
-        assert_eq!(a.application_status.as_deref(), Some("approved"));
-        assert_eq!(a.audience.default_value, "0");
-        assert_eq!(a.audience.options[0].label, "Everyone");
-        assert_eq!(a.audience.options[1].label, "Solo adultos (18+)");
-        assert_eq!(a.checked_at_ms, 42);
+    fn confirmed_permission() {
+        let a = access(json!({"reason": 1, "can_be_live": true, "user": {"username": "u"},
+                              "application_status": {"status": "approved"}}));
+        assert_eq!(a.scope, LiveScope::Approved);
+        assert_eq!(a.availability, Availability::Confirmed);
     }
 
     #[test]
-    fn tolerates_strings_and_missing_fields() {
-        let v = json!({ "reason": "0", "can_be_live": "false" });
-        let a = parse_account(&v, 0);
-        assert_eq!(a.live_access, LiveAccess::NotApproved);
-        assert_eq!(a.can_be_live, Some(false));
-        assert_eq!(a.audience, default_audience());
-        assert_eq!(a.username, "");
+    fn emission_not_available() {
+        let a = access(json!({"reason": 0, "can_be_live": false, "user": {"username": "u"}}));
+        assert_eq!(a.availability, Availability::NotAvailable { cause: UnavailableCause::NotApproved });
+        let a = access(json!({"reason": 0, "user": {}, "application_status": {"status": "never_applied"}}));
+        assert_eq!(a.availability, Availability::NotAvailable { cause: UnavailableCause::NeverApplied });
+        let a = access(json!({"reason": 0, "user": {}, "application_status": {"status": "rejected"}}));
+        assert_eq!(a.availability, Availability::NotAvailable { cause: UnavailableCause::Rejected });
+        let a = access(json!({"reason": 2, "can_be_live": true, "user": {}}));
+        assert_eq!(a.availability, Availability::NotAvailable { cause: UnavailableCause::Legacy });
+        let a = access(json!({"can_be_live": false, "user": {}}));
+        assert_eq!(a.availability, Availability::NotAvailable { cause: UnavailableCause::CannotGoLive });
     }
 
     #[test]
-    fn parses_categories() {
+    fn missing_null_or_wrong_types_are_unknown_not_rejected() {
+        for v in [
+            json!({"user": {"username": "u"}}),
+            json!({"reason": null, "can_be_live": null, "user": {}}),
+            json!({"reason": "0", "can_be_live": "false", "user": {}}),
+            json!({"reason": 1.5, "can_be_live": 0, "user": {}}),
+            json!({"reason": [], "can_be_live": {}, "user": {}}),
+        ] {
+            let a = access(v.clone());
+            assert!(matches!(a.availability, Availability::Unknown { .. }), "{v}: {:?}", a.availability);
+            assert!(!matches!(a.availability, Availability::NotAvailable { .. }));
+        }
+        let a = access(json!({"reason": "0", "can_be_live": "true", "user": {}}));
+        assert_eq!(a.reason, Field::Invalid { found: "cadena".into() });
+        assert_eq!(a.can_be_live, Field::Invalid { found: "cadena".into() });
+    }
+
+    #[test]
+    fn contradictory_data_is_reported() {
+        let a = access(json!({"reason": 1, "can_be_live": false, "user": {}}));
+        assert!(matches!(a.availability, Availability::Contradictory { .. }));
+        let a = access(json!({"reason": 0, "can_be_live": true, "user": {}}));
+        assert!(matches!(a.availability, Availability::Contradictory { .. }));
+    }
+
+    #[test]
+    fn approved_without_can_be_live_follows_desktop() {
+        let a = access(json!({"reason": 1, "user": {}}));
+        assert_eq!(a.availability, Availability::Confirmed);
+        let a = access(json!({"can_be_live": true, "user": {}}));
+        assert_eq!(a.availability, Availability::Confirmed);
+    }
+
+    #[test]
+    fn nested_application_status_is_validated() {
+        assert_eq!(field_application_status(Some(&json!({"status": "approved"}))), Field::Present { value: "approved".into() });
+        assert_eq!(field_application_status(Some(&json!({"status": null}))), Field::Missing);
+        assert_eq!(field_application_status(Some(&json!(null))), Field::Missing);
+        assert!(matches!(field_application_status(Some(&json!("approved"))), Field::Invalid { .. }));
+        assert!(matches!(field_application_status(Some(&json!({"status": 1}))), Field::Invalid { .. }));
+    }
+
+    #[test]
+    fn relog_rules() {
+        let a = access(json!({"reason": -1, "user": {}}));
+        assert_eq!(a.availability, Availability::NotAvailable { cause: UnavailableCause::Relog });
+        let a = access(json!({"info": []}));
+        assert_eq!(a.scope, LiveScope::Relog);
+    }
+
+    #[test]
+    fn username_and_summary() {
+        let info = parse_account(
+            &json!({"reason": 0, "can_be_live": false, "user": {"username": " creadora "},
+                    "application_status": {"status": "never_applied"}}),
+            200, 312, 9,
+        );
+        assert_eq!(info.username.as_deref(), Some("creadora"));
+        assert_eq!(info.http_status, 200);
+        assert_eq!(info.duration_ms, 312);
+        assert_eq!(
+            summary(&info.access),
+            "reason=0 · can_be_live=false · application_status=never_applied · user=presente"
+        );
+        let none = parse_account(&json!({"user": {"username": 5}}), 200, 0, 0);
+        assert_eq!(none.username, None);
+    }
+
+    #[test]
+    fn audience_parsing() {
+        let a = parse_audience(Some(&json!({"disable": false, "info_type": 1,
+            "types": [{"key": 0, "label": "Everyone"}, {"key": 1, "label": null}]})));
+        assert_eq!(a.default_value, "1");
+        assert_eq!(a.options[1].label, "Solo adultos (18+)");
+        assert_eq!(parse_audience(None), default_audience());
+    }
+
+    #[test]
+    fn parses_categories_with_mask_id() {
         let v = json!({ "categories": [
             { "full_name": "Fortnite", "game_mask_id": "123" },
             { "full_name": "Minecraft", "game_mask_id": 456 },

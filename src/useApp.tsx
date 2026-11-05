@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, onState, toErrorInfo } from "./api";
+import { errorText } from "./lib/text";
 import type { Snapshot } from "./types";
 
 export type ToastKind = "success" | "error" | "info";
@@ -81,7 +82,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         const e = toErrorInfo(err);
         if (e.code === "AUTH_CANCELLED") notify("info", e.message);
-        else notify("error", "No se pudo completar la acción", e.message);
+        else notify("error", "No se pudo completar la acción", errorText(e));
         api.getState().then(setSnapshot).catch(() => {});
         return undefined;
       } finally {

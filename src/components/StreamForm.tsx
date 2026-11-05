@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { validateTitle } from "../lib/text";
+import { accessPresentation, validateTitle } from "../lib/text";
 import { useApp } from "../useApp";
 import type { Category } from "../types";
 import { Button, Card } from "./ui";
@@ -25,10 +25,13 @@ export function StreamForm() {
 
   if (!snapshot || snapshot.auth.status !== "signedIn") return null;
   const { form, auth } = snapshot;
+  // El formulario solo aparece con permiso de emisión confirmado.
+  if (!accessPresentation(auth.access).canRequest) return null;
   const titleError = validateTitle(title, form.titleMaxChars);
   const busy = pending.create;
-  const canSubmit = !titleError && !!category && !snapshot.busy;
-  const audienceType = auth.account?.audience.defaultValue ?? "0";
+  // Rust aplica la misma regla: permiso confirmado y ninguna solicitud en curso.
+  const canSubmit = !titleError && !!category && !snapshot.busy && !busy;
+  const audienceType = auth.access.state === "done" ? auth.access.account.audience.defaultValue : "0";
 
   return (
     <Card title="Datos del LIVE">
@@ -53,8 +56,7 @@ export function StreamForm() {
       </div>
 
       <p className="notice">
-        ⚠ Obtener el servidor y la clave <strong>crea una sesión LIVE</strong> en tu cuenta de TikTok. Finalízala aquí
-        cuando termines.
+        ⚠ Esto <strong>crea una sesión LIVE</strong> en tu cuenta de TikTok. Finalízala aquí al terminar.
       </p>
 
       <div className="row">

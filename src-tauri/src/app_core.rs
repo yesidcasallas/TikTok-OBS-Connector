@@ -8,8 +8,9 @@ use crate::auth::{LoopbackServer, Pkce};
 use crate::error::{AppError, AppResult, ErrorInfo};
 use crate::event_log::{now_ms, EventLog};
 use crate::prefs::{ActiveStreamRecord, Preferences, PreferencesStore};
-use crate::provider::streamlabs::endpoints::{device_platform, TITLE_MAX_CHARS};
-use crate::provider::{AccountInfo, Category, LiveAccess, LiveProvider, StartLiveRequest};
+use crate::provider::streamlabs::endpoints::{device_platform, ACCESS_APPLY_URL, ACCESS_STATUS_URL, TITLE_MAX_CHARS};
+use crate::provider::streamlabs::models::summary;
+use crate::provider::{AccountInfo, Availability, Category, LiveProvider, StartLiveRequest, UnavailableCause};
 use crate::security::{Secret, TokenStore};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -55,13 +56,30 @@ pub enum Persistence {
     Unavailable { detail: String },
 }
 
+/// Estado de la comprobación del permiso de emisión. Separado de la sesión:
+/// estar autenticado no implica permiso.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum AccessView {
+    /// Aún no se ha comprobado en esta sesión.
+    Idle,
+    /// Comprobación en curso.
+    Checking,
+    /// Respuesta interpretada (ver `account.access.availability`).
+    Done { account: AccountInfo },
+    /// La comprobación falló (red, servidor, respuesta inesperada…): estado desconocido.
+    Failed { error: ErrorInfo },
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthView {
     pub status: AuthStatus,
     pub pending: Option<PendingView>,
-    pub account: Option<AccountInfo>,
-    pub account_error: Option<ErrorInfo>,
+    pub username: Option<String>,
+    pub access: AccessView,
+    /// Motivo por el que terminó la sesión anterior (p. ej., token inválido).
+    pub session_error: Option<ErrorInfo>,
     pub remember: bool,
     pub persistence: Persistence,
 }
@@ -116,6 +134,16 @@ pub enum CopyField {
     LoginUrl,
 }
 
+/// Páginas oficiales de TikTok sobre el acceso a LIVE con Streamlabs.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AccessPage {
+    /// Solicitar el acceso.
+    Apply,
+    /// Consultar el resultado de la solicitud.
+    Status,
+}
+
 // ---------------------------------------------------------------- estado --
 
 struct ActiveStream {
@@ -146,12 +174,16 @@ impl ActiveStream {
 struct Inner {
     token: Option<Secret>,
     username_hint: Option<String>,
-    account: Option<AccountInfo>,
-    account_error: Option<ErrorInfo>,
+    access: AccessView,
+    session_error: Option<ErrorInfo>,
     pending: Option<PendingView>,
     stream: Option<ActiveStream>,
     busy: Option<String>,
     persistence: Persistence,
+    /// Cambia en cada inicio o cierre de sesión: invalida respuestas antiguas.
+    session_gen: u64,
+    /// Cambia en cada comprobación: solo se aplica la más reciente.
+    check_seq: u64,
 }
 
 pub struct AppCore {
@@ -168,15 +200,24 @@ pub struct AppCore {
     login_timeout: Duration,
 }
 
-pub fn access_label(a: LiveAccess) -> &'static str {
+/// Explicación de por qué la emisión no está disponible (según el proveedor).
+pub fn cause_text(c: UnavailableCause) -> &'static str {
+    match c {
+        UnavailableCause::NotApproved => "Streamlabs indica que la cuenta no tiene aprobado el acceso a LIVE desde PC (reason=0).",
+        UnavailableCause::NeverApplied => "Streamlabs no registra un acceso aprobado (application_status=never_applied). Si ya enviaste la solicitud, puede estar en revisión: Streamlabs no muestra ese estado.",
+        UnavailableCause::Rejected => "Streamlabs indica que la solicitud de acceso fue rechazada.",
+        UnavailableCause::Legacy => "la cuenta tiene acceso «legacy»: Streamlabs no genera la clave; se obtiene en TikTok LIVE Producer.",
+        UnavailableCause::Relog => "Streamlabs pide volver a iniciar sesión para actualizar los permisos.",
+        UnavailableCause::CannotGoLive => "Streamlabs indica can_be_live=false: la cuenta no puede emitir ahora.",
+    }
+}
+
+fn availability_label(a: &Availability) -> String {
     match a {
-        LiveAccess::Approved => "aprobado",
-        LiveAccess::Legacy => "acceso legacy (clave desde TikTok LIVE Producer)",
-        LiveAccess::NotApproved => "no aprobado",
-        LiveAccess::NeverApplied => "nunca solicitado",
-        LiveAccess::Rejected => "solicitud rechazada",
-        LiveAccess::Relog => "hay que volver a iniciar sesión",
-        LiveAccess::Unknown => "desconocido",
+        Availability::Confirmed => "permiso de emisión confirmado".into(),
+        Availability::NotAvailable { cause } => format!("emisión no disponible ({})", cause_text(*cause)),
+        Availability::Contradictory { detail } => format!("datos contradictorios ({detail})"),
+        Availability::Unknown { detail } => format!("estado desconocido ({detail})"),
     }
 }
 
@@ -215,12 +256,14 @@ impl AppCore {
             inner: Mutex::new(Inner {
                 token: None,
                 username_hint: None,
-                account: None,
-                account_error: None,
+                access: AccessView::Idle,
+                session_error: None,
                 pending: None,
                 stream,
                 busy: None,
                 persistence: Persistence::Memory,
+                session_gen: 0,
+                check_seq: 0,
             }),
             op: tokio::sync::Mutex::new(()),
             login_cancel: Mutex::new(None),
@@ -263,8 +306,13 @@ impl AppCore {
             auth: AuthView {
                 status,
                 pending: i.pending.clone(),
-                account: i.account.clone(),
-                account_error: i.account_error.clone(),
+                username: match &i.access {
+                    AccessView::Done { account } => account.username.clone(),
+                    _ => None,
+                }
+                .or_else(|| i.username_hint.clone()),
+                access: if i.token.is_some() { i.access.clone() } else { AccessView::Idle },
+                session_error: i.session_error.clone(),
                 remember: prefs.remember_session,
                 persistence: i.persistence.clone(),
             },
@@ -326,6 +374,8 @@ impl AppCore {
                 self.with_inner(|i| {
                     i.token = Some(token);
                     i.persistence = Persistence::Keyring;
+                    i.session_gen += 1;
+                    i.access = AccessView::Idle;
                 });
                 self.log.info("Sesión recuperada del almacén de credenciales del sistema.");
                 self.emit();
@@ -386,7 +436,7 @@ impl AppCore {
         let url = self.provider.login_url(port, &pkce.challenge);
         let started = now_ms();
         self.with_inner(|i| {
-            i.account_error = None;
+            i.session_error = None;
             i.pending = Some(PendingView {
                 login_url: url.clone(),
                 browser_opened: false,
@@ -441,9 +491,10 @@ impl AppCore {
         self.with_inner(|i| {
             i.token = Some(grant.token.clone());
             i.username_hint = grant.username.clone();
-            i.account = None;
-            i.account_error = None;
+            i.access = AccessView::Idle;
+            i.session_error = None;
             i.busy = None;
+            i.session_gen += 1;
         });
         self.log.success(format!("Autenticación correcta{who}. Esto no garantiza acceso a LIVE."));
         self.emit();
@@ -486,9 +537,10 @@ impl AppCore {
     async fn clear_session(&self, reason: Option<&AppError>) {
         self.with_inner(|i| {
             i.token = None;
-            i.account = None;
+            i.access = AccessView::Idle;
             i.username_hint = None;
-            i.account_error = reason.map(ErrorInfo::from);
+            i.session_error = reason.map(ErrorInfo::from);
+            i.session_gen += 1;
             if i.persistence == Persistence::Keyring {
                 i.persistence = Persistence::Memory;
             }
@@ -557,38 +609,101 @@ impl AppCore {
         }
     }
 
-    pub async fn refresh_account(&self) -> AppResult<AccountInfo> {
-        let _guard = self.op.try_lock().map_err(|_| AppError::Busy)?;
+    /// Comprueba el permiso de emisión (solo lectura: nunca crea un LIVE).
+    ///
+    /// No retiene el candado de operaciones durante la petición; en su lugar,
+    /// la respuesta solo se aplica si sigue siendo de la misma sesión y es la
+    /// comprobación más reciente. Las respuestas tardías se descartan.
+    pub async fn refresh_account(&self) -> AppResult<Snapshot> {
+        if self.op.try_lock().is_err() {
+            return Err(AppError::Busy);
+        }
         let token = self.token()?;
-        self.set_busy(Some("Comprobando el acceso a LIVE…"));
+        let (gen, seq) = self.with_inner(|i| {
+            i.check_seq += 1;
+            i.access = AccessView::Checking;
+            (i.session_gen, i.check_seq)
+        });
+        self.emit();
         let result = self.provider.account_info(&token).await;
-        self.with_inner(|i| i.busy = None);
+        drop(token);
+        let current = self.with_inner(|i| i.session_gen == gen && i.check_seq == seq);
+        if !current {
+            self.log.info("Respuesta de comprobación descartada: pertenece a una sesión o comprobación anterior.");
+            return Ok(self.snapshot());
+        }
         match result {
             Ok(mut account) => {
-                if account.username.is_empty() {
-                    account.username = self.with_inner(|i| i.username_hint.clone()).unwrap_or_default();
+                if account.username.is_none() {
+                    account.username = self.with_inner(|i| i.username_hint.clone());
                 }
                 self.log.info(format!(
-                    "Cuenta @{}: acceso a LIVE {}.",
-                    if account.username.is_empty() { "?" } else { &account.username },
-                    access_label(account.live_access)
+                    "Comprobación de acceso: HTTP {} en {} ms · {} → {}.",
+                    account.http_status,
+                    account.duration_ms,
+                    summary(&account.access),
+                    availability_label(&account.access.availability)
                 ));
-                self.with_inner(|i| {
-                    i.account = Some(account.clone());
-                    i.account_error = None;
-                });
+                self.with_inner(|i| i.access = AccessView::Done { account });
                 self.emit();
-                Ok(account)
+                Ok(self.snapshot())
             }
             Err(e) => {
-                self.handle_auth_error(&e).await;
-                if e != AppError::TokenInvalid {
-                    self.with_inner(|i| i.account_error = Some(ErrorInfo::from(&e)));
+                self.log.warn(format!("No se pudo comprobar el acceso a LIVE: {}", e.for_log()));
+                if e == AppError::TokenInvalid {
+                    self.handle_auth_error(&e).await;
+                } else {
+                    self.with_inner(|i| i.access = AccessView::Failed { error: ErrorInfo::from(&e) });
                     self.emit();
                 }
                 Err(e)
             }
         }
+    }
+
+    /// Abre la página oficial de TikTok para solicitar o consultar el acceso.
+    pub async fn open_access_page(&self, page: AccessPage) -> AppResult<()> {
+        let url = match page {
+            AccessPage::Apply => ACCESS_APPLY_URL,
+            AccessPage::Status => ACCESS_STATUS_URL,
+        };
+        let opener = self.opener.clone();
+        if blocking(move || opener.open(url)).await? {
+            self.log.info(match page {
+                AccessPage::Apply => "Abierta la página de TikTok para solicitar el acceso a LIVE con Streamlabs.",
+                AccessPage::Status => "Abierta la página de TikTok para consultar la solicitud de acceso.",
+            });
+            Ok(())
+        } else {
+            Err(AppError::Validation(format!("No se pudo abrir el navegador. Visita {url}")))
+        }
+    }
+
+    /// Diagnóstico para copiar: versión, plataforma y últimas entradas
+    /// (ya redactadas, sin tokens ni claves).
+    pub fn diagnostics_text(&self) -> String {
+        let s = self.snapshot();
+        let access = match &s.auth.access {
+            AccessView::Idle => "sin comprobar".to_string(),
+            AccessView::Checking => "comprobando".to_string(),
+            AccessView::Done { account } => format!(
+                "HTTP {} · {} · {}",
+                account.http_status,
+                summary(&account.access),
+                availability_label(&account.access.availability)
+            ),
+            AccessView::Failed { error } => format!("error {} ({})", error.code, error.message),
+        };
+        format!(
+            "TikTok OBS Connector {} · {} · device_platform={}\nSesión: {:?} · Acceso: {}\nRegistro: {}\n---\n{}",
+            s.app.version,
+            s.app.os,
+            s.app.device_platform,
+            s.auth.status,
+            access,
+            self.log.file_path().map(|p| p.display().to_string()).unwrap_or_else(|| "solo en memoria".into()),
+            self.log.recent_text(80)
+        )
     }
 
     pub async fn search_categories(&self, query: &str) -> AppResult<Vec<Category>> {
@@ -618,7 +733,10 @@ impl AppCore {
         if req.category.id.len() > 128 || req.category.name.chars().count() > 200 {
             return Err(AppError::Validation("Categoría no válida.".into()));
         }
-        let audience = self.with_inner(|i| i.account.as_ref().map(|a| a.audience.clone()));
+        let audience = self.with_inner(|i| match &i.access {
+            AccessView::Done { account } => Some(account.audience.clone()),
+            _ => None,
+        });
         match audience {
             Some(a) if a.disabled => req.audience_type = a.default_value,
             Some(a) => {
@@ -635,12 +753,36 @@ impl AppCore {
         Ok(req)
     }
 
+    /// Misma regla que el botón de la interfaz: solo con permiso confirmado y
+    /// sin comprobaciones en curso (Streamlabs Desktop tampoco pide
+    /// credenciales si la cuenta no está aprobada).
+    fn ensure_live_permission(&self) -> AppResult<()> {
+        self.with_inner(|i| match &i.access {
+            AccessView::Checking => Err(AppError::AccessCheckInProgress),
+            AccessView::Done { account } => match &account.access.availability {
+                Availability::Confirmed => Ok(()),
+                Availability::NotAvailable { cause } => Err(AppError::LiveNotAvailable(cause_text(*cause).into())),
+                Availability::Contradictory { detail } => {
+                    Err(AppError::AccessUnconfirmed(format!("Streamlabs devolvió datos contradictorios ({detail}).")))
+                }
+                Availability::Unknown { detail } => Err(AppError::AccessUnconfirmed(format!(
+                    "la respuesta de Streamlabs no permite saberlo ({detail})."
+                ))),
+            },
+            AccessView::Failed { .. } => {
+                Err(AppError::AccessUnconfirmed("la última comprobación falló.".into()))
+            }
+            AccessView::Idle => Err(AppError::AccessUnconfirmed("aún no se ha comprobado.".into())),
+        })
+    }
+
     pub async fn start_stream(&self, req: StartLiveRequest) -> AppResult<Snapshot> {
         let _guard = self.op.try_lock().map_err(|_| AppError::Busy)?;
         let token = self.token()?;
         if self.with_inner(|i| i.stream.is_some()) {
             return Err(AppError::StreamAlreadyCreated);
         }
+        self.ensure_live_permission()?;
         let req = self.validate(req)?;
         self.set_busy(Some("Solicitando servidor y clave a Streamlabs…"));
         self.log.info(format!(
@@ -690,7 +832,7 @@ impl AppCore {
                 Ok(self.snapshot())
             }
             Err(e) => {
-                self.log.error(format!("No se pudieron obtener las credenciales: {e}"));
+                self.log.error(format!("No se pudieron obtener las credenciales: {}", e.for_log()));
                 self.handle_auth_error(&e).await;
                 self.emit();
                 Err(e)
@@ -725,7 +867,7 @@ impl AppCore {
                 Ok(self.snapshot())
             }
             Err(e) => {
-                self.log.error(format!("No se pudo finalizar el LIVE: {e}"));
+                self.log.error(format!("No se pudo finalizar el LIVE: {}", e.for_log()));
                 self.handle_auth_error(&e).await;
                 self.emit();
                 Err(e)

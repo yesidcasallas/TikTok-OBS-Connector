@@ -1,8 +1,10 @@
 //! Traducción de las respuestas de error de Streamlabs a [`AppError`].
 //!
-//! Distingue token inválido, permisos insuficientes, restricciones de la
-//! cuenta y fallos del proveedor. Los códigos de TikTok proceden de
-//! `ETikTokErrorTypes` en Streamlabs Desktop.
+//! Principio: **un código HTTP aislado no prueba la causa**. Solo se afirma
+//! «sin permiso» cuando el proveedor envía un código explícito
+//! (`ETikTokErrorTypes` de Streamlabs Desktop). En los demás casos se
+//! clasifica por tipo (autenticación, autorización, validación, límite,
+//! servidor, inesperado) y se conserva el mensaje original como detalle.
 
 use crate::error::AppError;
 use crate::security::redact;
@@ -17,11 +19,21 @@ pub enum Op {
     End,
 }
 
+impl Op {
+    pub fn name(self) -> &'static str {
+        match self {
+            Op::Exchange => "auth_data",
+            Op::Info => "tiktok_info",
+            Op::Categories => "tiktok_categories",
+            Op::Start => "stream_start",
+            Op::End => "stream_end",
+        }
+    }
+}
+
 const MAX_MESSAGE_CHARS: usize = 300;
 
-const BLOCKED_DETAIL: &str = "La respuesta no es JSON: puede tratarse de una protección anti-bots o de una restricción del proveedor para este cliente o plataforma.";
-
-const PERMISSION_HINT: &str = "Solicita el acceso a LIVE de Streamlabs para tu cuenta de TikTok o revisa su estado en TikTok LIVE Center.";
+const BLOCKED_DETAIL: &str = "La respuesta no es JSON: puede tratarse de una protección anti-bots o de una restricción del proveedor.";
 
 /// Limpia un texto del proveedor antes de mostrarlo: sin caracteres de
 /// control, sin secretos y con longitud acotada.
@@ -72,24 +84,16 @@ pub fn extract_code(v: &Value) -> Option<String> {
         .map(|c| c.to_ascii_lowercase())
 }
 
-fn platform_hint(message: &str) -> &'static str {
-    let m = message.to_ascii_lowercase();
-    if ["platform", "device", "linux", "plataforma", " os "].iter().any(|k| m.contains(k)) {
-        " Streamlabs podría no admitir la plataforma «linux» (device_platform). Esta aplicación no simula Windows."
-    } else {
-        ""
-    }
-}
-
-fn from_code(code: &str, message: Option<&str>) -> Option<AppError> {
-    let detail = message.map(|m| format!("{PERMISSION_HINT} Detalle: {m}")).unwrap_or_else(|| PERMISSION_HINT.to_string());
+/// Códigos explícitos (`ETikTokErrorTypes`).
+fn from_code(code: &str, status: u16, message: Option<String>) -> Option<AppError> {
     match code {
         "access_token_invalid" => Some(AppError::TokenInvalid),
         "scope_not_authorized" | "scope_permission_missed" | "user_has_no_live_auth" => {
-            Some(AppError::PermissionDenied(detail))
+            Some(AppError::PermissionDenied { message })
         }
         "user_already_live" => Some(AppError::AlreadyLive),
         "rate_limit_exceeded" => Some(AppError::RateLimited),
+        "invalid_params" => Some(AppError::ProviderRejected { status, message }),
         _ => None,
     }
 }
@@ -100,7 +104,7 @@ pub fn map_http_error(op: Op, status: u16, body: &[u8]) -> AppError {
     let message = json.as_ref().and_then(extract_message);
     if let Some(v) = &json {
         if let Some(code) = extract_code(v) {
-            if let Some(e) = from_code(&code, message.as_deref()) {
+            if let Some(e) = from_code(&code, status, message.clone()) {
                 return e;
             }
         }
@@ -112,27 +116,20 @@ pub fn map_http_error(op: Op, status: u16, body: &[u8]) -> AppError {
             403 if json.is_some() => AppError::AuthExchangeRejected,
             403 => AppError::ProviderBlocked { status, detail: BLOCKED_DETAIL.into() },
             429 => AppError::RateLimited,
-            500..=599 => AppError::ProviderUnavailable(status),
+            500..=599 => AppError::ProviderUnavailable { status, message },
             _ => AppError::ProviderUnexpected(format!("HTTP {status} en el intercambio del código")),
         };
     }
 
     match status {
         401 => AppError::TokenInvalid,
-        403 => match (&json, message) {
-            (Some(_), Some(m)) => AppError::PermissionDenied(format!("{PERMISSION_HINT} Detalle: {m}{}", platform_hint(&m))),
-            (Some(_), None) => AppError::PermissionDenied(PERMISSION_HINT.into()),
-            (None, _) => AppError::ProviderBlocked { status, detail: BLOCKED_DETAIL.into() },
-        },
+        403 if json.is_some() => AppError::ProviderForbidden { status, message },
+        403 => AppError::ProviderBlocked { status, detail: BLOCKED_DETAIL.into() },
         // Streamlabs Desktop interpreta 422 al iniciar como cuenta sancionada.
-        422 if op == Op::Start => AppError::AccountRestricted,
+        422 if op == Op::Start => AppError::AccountRestricted { message },
         429 => AppError::RateLimited,
-        400..=499 => {
-            let m = message.unwrap_or_else(|| "sin detalle".to_string());
-            let hint = platform_hint(&m);
-            AppError::ProviderRejected { status, message: format!("{m}{hint}") }
-        }
-        500..=599 => AppError::ProviderUnavailable(status),
+        400..=499 => AppError::ProviderRejected { status, message },
+        500..=599 => AppError::ProviderUnavailable { status, message },
         _ => AppError::ProviderUnexpected(format!("HTTP {status}")),
     }
 }
@@ -151,13 +148,11 @@ pub fn body_error(status: u16, v: &Value) -> Option<AppError> {
     }
     let message = extract_message(v);
     if let Some(code) = extract_code(v) {
-        if let Some(e) = from_code(&code, message.as_deref()) {
+        if let Some(e) = from_code(&code, status, message.clone()) {
             return Some(e);
         }
     }
-    let m = message.unwrap_or_else(|| "el proveedor indicó un error sin detalle".into());
-    let hint = platform_hint(&m);
-    Some(AppError::ProviderRejected { status, message: format!("{m}{hint}") })
+    Some(AppError::ProviderRejected { status, message })
 }
 
 #[cfg(test)]
@@ -169,82 +164,70 @@ mod tests {
         serde_json::to_vec(&v).unwrap()
     }
 
+    const GENERIC: &str = "Unable to go live. Please try again later";
+
     #[test]
-    fn unauthorized_is_token_invalid() {
-        assert_eq!(map_http_error(Op::Info, 401, b"Unauthorized."), AppError::TokenInvalid);
-        assert_eq!(map_http_error(Op::Start, 401, b""), AppError::TokenInvalid);
+    fn generic_provider_error_is_not_presented_as_missing_permission() {
+        for status in [400u16, 403, 500, 503] {
+            let e = map_http_error(Op::Start, status, &body(json!({ "message": GENERIC })));
+            assert!(!matches!(e, AppError::PermissionDenied { .. }), "HTTP {status}: {e:?}");
+            assert_eq!(e.provider_detail(), Some(GENERIC), "HTTP {status} debe conservar el mensaje");
+            assert_eq!(e.http_status(), Some(status));
+        }
+        let e = map_http_error(Op::Start, 403, &body(json!({ "message": GENERIC })));
+        assert!(matches!(e, AppError::ProviderForbidden { status: 403, .. }));
+        let e = body_error(200, &json!({"success": false, "message": GENERIC})).unwrap();
+        assert!(matches!(e, AppError::ProviderRejected { status: 200, .. }));
+        assert_eq!(e.provider_detail(), Some(GENERIC));
     }
 
     #[test]
-    fn exchange_failures_are_rejections() {
-        assert_eq!(map_http_error(Op::Exchange, 401, br#"{"message":""}"#), AppError::AuthExchangeRejected);
-        assert_eq!(map_http_error(Op::Exchange, 503, b""), AppError::ProviderUnavailable(503));
-    }
-
-    #[test]
-    fn forbidden_json_is_permission_but_html_is_block() {
-        let e = map_http_error(Op::Start, 403, &body(json!({"message":"No LIVE access"})));
-        assert!(matches!(e, AppError::PermissionDenied(ref m) if m.contains("No LIVE access")));
-        let e = map_http_error(Op::Start, 403, b"<html>challenge</html>");
-        assert!(matches!(e, AppError::ProviderBlocked { status: 403, .. }));
-    }
-
-    #[test]
-    fn tiktok_codes_take_precedence() {
+    fn explicit_codes_are_permission_denied() {
         let e = map_http_error(
             Op::Start,
             400,
             &body(json!({"data": {"code": "user_has_no_live_auth", "message": "no auth"}})),
         );
-        assert!(matches!(e, AppError::PermissionDenied(_)));
-        let e = map_http_error(Op::Start, 400, &body(json!({"data": {"code": "user_already_live"}})));
-        assert_eq!(e, AppError::AlreadyLive);
-        let e = map_http_error(Op::Info, 400, &body(json!({"error": {"code": "access_token_invalid"}})));
-        assert_eq!(e, AppError::TokenInvalid);
+        assert_eq!(e, AppError::PermissionDenied { message: Some("no auth".into()) });
+        let e = body_error(200, &json!({"error": true, "data": {"code": "scope_not_authorized"}})).unwrap();
+        assert!(matches!(e, AppError::PermissionDenied { .. }));
     }
 
     #[test]
-    fn status_specific_mappings() {
-        assert_eq!(map_http_error(Op::Start, 422, b"{}"), AppError::AccountRestricted);
+    fn other_explicit_codes() {
+        assert_eq!(map_http_error(Op::Start, 400, &body(json!({"data": {"code": "user_already_live"}}))), AppError::AlreadyLive);
+        assert_eq!(map_http_error(Op::Info, 400, &body(json!({"error": {"code": "access_token_invalid"}}))), AppError::TokenInvalid);
+        assert_eq!(map_http_error(Op::Start, 400, &body(json!({"code": "rate_limit_exceeded"}))), AppError::RateLimited);
+    }
+
+    #[test]
+    fn status_classification() {
+        assert_eq!(map_http_error(Op::Info, 401, b"Unauthorized."), AppError::TokenInvalid);
+        assert!(matches!(map_http_error(Op::Start, 403, b"<html>cf</html>"), AppError::ProviderBlocked { status: 403, .. }));
+        assert_eq!(map_http_error(Op::Start, 422, b"{}"), AppError::AccountRestricted { message: None });
         assert!(matches!(map_http_error(Op::Info, 422, b"{}"), AppError::ProviderRejected { status: 422, .. }));
         assert_eq!(map_http_error(Op::End, 429, b""), AppError::RateLimited);
-        assert_eq!(map_http_error(Op::Categories, 500, b""), AppError::ProviderUnavailable(500));
+        assert_eq!(map_http_error(Op::Categories, 500, b""), AppError::ProviderUnavailable { status: 500, message: None });
         assert!(matches!(map_http_error(Op::Info, 302, b""), AppError::ProviderUnexpected(_)));
     }
 
     #[test]
-    fn platform_restriction_is_explained() {
-        let e = map_http_error(
-            Op::Start,
-            400,
-            &body(json!({"message": "Unsupported device platform"})),
-        );
-        let text = e.to_string();
-        assert!(text.contains("Unsupported device platform"));
-        assert!(text.contains("linux"));
+    fn exchange_failures() {
+        assert_eq!(map_http_error(Op::Exchange, 401, br#"{"message":""}"#), AppError::AuthExchangeRejected);
+        assert!(matches!(map_http_error(Op::Exchange, 503, b""), AppError::ProviderUnavailable { status: 503, .. }));
     }
 
     #[test]
     fn messages_are_sanitized() {
-        let e = map_http_error(
-            Op::Start,
-            400,
-            &body(json!({"message": "bad key=live_123456 \n\t Bearer abc.def"})),
-        );
-        let text = e.to_string();
-        assert!(!text.contains("live_123456"));
-        assert!(!text.contains("abc.def"));
-        let long = "x".repeat(1000);
-        assert!(sanitize_message(&long).chars().count() <= MAX_MESSAGE_CHARS + 1);
+        let e = map_http_error(Op::Start, 400, &body(json!({"message": "bad key=live_123456 \n\t Bearer abc.def"})));
+        let d = e.provider_detail().unwrap();
+        assert!(!d.contains("live_123456") && !d.contains("abc.def"));
+        assert!(sanitize_message(&"x".repeat(1000)).chars().count() <= MAX_MESSAGE_CHARS + 1);
     }
 
     #[test]
-    fn body_errors_on_success_status() {
+    fn success_bodies_are_not_errors() {
         assert!(body_error(200, &json!({"success": true})).is_none());
         assert!(body_error(200, &json!({"reason": 1, "error": null})).is_none());
-        let e = body_error(200, &json!({"success": false, "message": "Stream limit"})).unwrap();
-        assert!(matches!(e, AppError::ProviderRejected { status: 200, ref message } if message.contains("Stream limit")));
-        let e = body_error(200, &json!({"error": true, "data": {"code": "scope_not_authorized"}})).unwrap();
-        assert!(matches!(e, AppError::PermissionDenied(_)));
     }
 }

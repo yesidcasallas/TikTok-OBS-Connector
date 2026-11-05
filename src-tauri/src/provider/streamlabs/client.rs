@@ -2,17 +2,18 @@
 
 use super::endpoints::*;
 use super::errors::{body_error, map_http_error, sanitize_message, Op};
-use super::models::{parse_account, parse_categories, AuthDataResponse, StartResponse};
+use super::models::{parse_account, parse_categories, summary, AuthDataResponse, StartResponse};
 use crate::auth::{CallbackInterpreter, CallbackVerdict};
 use crate::error::{AppError, AppResult};
-use crate::event_log::now_ms;
+use crate::event_log::{now_ms, EventLog};
 use crate::provider::{AccountInfo, AuthGrant, Category, LiveCredentials, LiveProvider, StartLiveRequest};
 use crate::security::Secret;
 use async_trait::async_trait;
-use reqwest::header::ACCEPT;
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use reqwest::multipart::Form;
 use serde_json::Value;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use url::Url;
 use zeroize::Zeroize;
 
@@ -23,9 +24,26 @@ pub fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+/// Respuesta HTTP ya leída, con los metadatos necesarios para validar
+/// antes de deserializar.
+struct HttpResponse {
+    status: u16,
+    content_type: Option<String>,
+    body: Vec<u8>,
+    duration_ms: u64,
+}
+
+impl HttpResponse {
+    /// `true` si el tipo de contenido es JSON o no se indicó.
+    fn json_or_unspecified(&self) -> bool {
+        self.content_type.as_deref().map(|c| c.contains("json")).unwrap_or(true)
+    }
+}
+
 pub struct StreamlabsProvider {
     http: reqwest::Client,
     base: Url,
+    diag: Option<Arc<EventLog>>,
 }
 
 impl StreamlabsProvider {
@@ -45,7 +63,19 @@ impl StreamlabsProvider {
             .https_only(base.scheme() == "https")
             .build()
             .map_err(|e| AppError::Internal(format!("cliente HTTP: {}", e.without_url())))?;
-        Ok(StreamlabsProvider { http, base })
+        Ok(StreamlabsProvider { http, base, diag: None })
+    }
+
+    /// Registra cada petición (operación, código, tipo, duración) en `log`.
+    pub fn with_diagnostics(mut self, log: Arc<EventLog>) -> Self {
+        self.diag = Some(log);
+        self
+    }
+
+    fn diag(&self, msg: String) {
+        if let Some(log) = &self.diag {
+            log.info(msg);
+        }
     }
 
     fn url(&self, path: &str) -> Url {
@@ -54,32 +84,61 @@ impl StreamlabsProvider {
         u
     }
 
-    /// Envía la petición y devuelve (estado, cuerpo). Nunca incluye la URL
-    /// (que puede contener el código o el verifier) en los errores.
-    async fn send(&self, request: reqwest::RequestBuilder) -> AppResult<(u16, Vec<u8>)> {
-        let resp = request
-            .header(ACCEPT, "application/json")
-            .send()
-            .await
-            .map_err(network_error)?;
-        let status = resp.status().as_u16();
-        if let Some(len) = resp.content_length() {
-            if len as usize > MAX_BODY_BYTES {
-                return Err(AppError::ProviderUnexpected("respuesta demasiado grande".into()));
+    /// Envía la petición. Nunca incluye la URL (que puede contener el código
+    /// o el verifier) ni el cuerpo en errores o registros.
+    async fn send(&self, op: Op, request: reqwest::RequestBuilder) -> AppResult<HttpResponse> {
+        let started = Instant::now();
+        let elapsed = |s: Instant| s.elapsed().as_millis() as u64;
+        let resp = match request.header(ACCEPT, "application/json").send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let err = network_error(e);
+                self.diag(format!("HTTP {}: sin respuesta ({}) · {} ms", op.name(), err, elapsed(started)));
+                return Err(err);
             }
+        };
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
+        if resp.content_length().map(|l| l as usize > MAX_BODY_BYTES).unwrap_or(false) {
+            return Err(AppError::ProviderUnexpected("respuesta demasiado grande".into()));
         }
         let bytes = resp.bytes().await.map_err(network_error)?;
         if bytes.len() > MAX_BODY_BYTES {
             return Err(AppError::ProviderUnexpected("respuesta demasiado grande".into()));
         }
-        Ok((status, bytes.to_vec()))
+        let duration_ms = elapsed(started);
+        self.diag(format!(
+            "HTTP {}: {} · {} · {} ms",
+            op.name(),
+            status,
+            content_type.as_deref().unwrap_or("sin tipo"),
+            duration_ms
+        ));
+        Ok(HttpResponse { status, content_type, body: bytes.to_vec(), duration_ms })
     }
 
-    fn parse_json(body: &[u8], what: &str) -> AppResult<Value> {
-        serde_json::from_slice::<Value>(body)
+    /// Objeto JSON de una respuesta 2xx; valida el tipo de contenido antes.
+    fn parse_json(resp: &HttpResponse, what: &str) -> AppResult<Value> {
+        if !resp.json_or_unspecified() {
+            return Err(AppError::ProviderUnexpected(format!(
+                "{what} devolvió «{}» en lugar de JSON (HTTP {})",
+                resp.content_type.as_deref().unwrap_or("?"),
+                resp.status
+            )));
+        }
+        serde_json::from_slice::<Value>(&resp.body)
             .ok()
             .filter(Value::is_object)
-            .ok_or_else(|| AppError::ProviderUnexpected(format!("la respuesta de {what} no es un objeto JSON")))
+            .ok_or_else(|| AppError::ProviderUnexpected(format!("{what} no devolvió un objeto JSON válido")))
+    }
+
+    /// Registra el error de una operación (saneado, sin cuerpo).
+    fn diag_error(&self, op: Op, e: &AppError) {
+        self.diag(format!("{}: {}", op.name(), e.for_log()));
     }
 }
 
@@ -156,15 +215,14 @@ impl LiveProvider for StreamlabsProvider {
         url.query_pairs_mut()
             .append_pair("code_verifier", verifier.expose())
             .append_pair("code", code.expose());
-        let (status, mut body) = self.send(self.http.get(url)).await?;
-        let result = if status == 200 {
-            match serde_json::from_slice::<AuthDataResponse>(&body) {
+        let mut resp = self.send(Op::Exchange, self.http.get(url)).await?;
+        let result = if resp.status == 200 {
+            match serde_json::from_slice::<AuthDataResponse>(&resp.body) {
                 Ok(mut r) => {
                     if r.success == Some(false) {
                         Err(AppError::AuthExchangeRejected)
                     } else {
-                        let data = r.data.as_mut();
-                        match data {
+                        match r.data.as_mut() {
                             Some(d) => match d.oauth_token.take().filter(|t| !t.is_empty()) {
                                 Some(token) => Ok(AuthGrant {
                                     token: Secret::new(token),
@@ -182,23 +240,33 @@ impl LiveProvider for StreamlabsProvider {
                 )),
             }
         } else {
-            Err(map_http_error(Op::Exchange, status, &body))
+            Err(map_http_error(Op::Exchange, resp.status, &resp.body))
         };
-        body.zeroize();
+        resp.body.zeroize();
+        if let Err(e) = &result {
+            self.diag_error(Op::Exchange, e);
+        }
         result
     }
 
     async fn account_info(&self, token: &Secret) -> AppResult<AccountInfo> {
         let req = self.http.get(self.url(TIKTOK_INFO_PATH)).bearer_auth(token.expose());
-        let (status, body) = self.send(req).await?;
-        if status != 200 {
-            return Err(map_http_error(Op::Info, status, &body));
+        let resp = self.send(Op::Info, req).await?;
+        let result = (|| {
+            if resp.status != 200 {
+                return Err(map_http_error(Op::Info, resp.status, &resp.body));
+            }
+            let v = Self::parse_json(&resp, "/tiktok/info")?;
+            if let Some(e) = body_error(resp.status, &v) {
+                return Err(e);
+            }
+            Ok(parse_account(&v, resp.status, resp.duration_ms, now_ms()))
+        })();
+        match &result {
+            Ok(info) => self.diag(format!("{}: {}", Op::Info.name(), summary(&info.access))),
+            Err(e) => self.diag_error(Op::Info, e),
         }
-        let v = Self::parse_json(&body, "/tiktok/info")?;
-        if let Some(e) = body_error(status, &v) {
-            return Err(e);
-        }
-        Ok(parse_account(&v, now_ms()))
+        result
     }
 
     async fn search_categories(&self, token: &Secret, query: &str) -> AppResult<Vec<Category>> {
@@ -207,12 +275,14 @@ impl LiveProvider for StreamlabsProvider {
         if !q.is_empty() {
             let mut url = self.url(TIKTOK_INFO_PATH);
             url.query_pairs_mut().append_pair("category", &q);
-            let (status, body) = self.send(self.http.get(url).bearer_auth(token.expose())).await?;
-            if status != 200 {
-                return Err(map_http_error(Op::Categories, status, &body));
+            let resp = self.send(Op::Categories, self.http.get(url).bearer_auth(token.expose())).await?;
+            if resp.status != 200 {
+                let e = map_http_error(Op::Categories, resp.status, &resp.body);
+                self.diag_error(Op::Categories, &e);
+                return Err(e);
             }
-            let v = Self::parse_json(&body, "la búsqueda de categorías")?;
-            if let Some(e) = body_error(status, &v) {
+            let v = Self::parse_json(&resp, "la búsqueda de categorías")?;
+            if let Some(e) = body_error(resp.status, &v) {
                 return Err(e);
             }
             out = parse_categories(&v).ok_or_else(|| {
@@ -225,19 +295,29 @@ impl LiveProvider for StreamlabsProvider {
     }
 
     async fn start_live(&self, token: &Secret, req: &StartLiveRequest) -> AppResult<LiveCredentials> {
+        // Mismos campos y orden que Streamlabs Desktop (`startStream`) y que la
+        // referencia (`Stream.start`): title, device_platform, category, audience_type.
         let form = Form::new()
             .text("title", req.title.clone())
             .text("device_platform", device_platform())
             .text("category", req.category.id.clone())
             .text("audience_type", req.audience_type.clone());
+        self.diag(format!(
+            "{}: título de {} caracteres · category={} · device_platform={} · audience_type={}",
+            Op::Start.name(),
+            req.title.chars().count(),
+            if req.category.id.is_empty() { "«» (Otra)".to_string() } else { format!("id {}", req.category.id) },
+            device_platform(),
+            req.audience_type
+        ));
         let request = self
             .http
             .post(self.url(STREAM_START_PATH))
             .bearer_auth(token.expose())
             .multipart(form);
-        let (status, mut body) = self.send(request).await?;
-        let result = if (200..300).contains(&status) {
-            match serde_json::from_slice::<StartResponse>(&body) {
+        let mut resp = self.send(Op::Start, request).await?;
+        let result = if (200..300).contains(&resp.status) {
+            match serde_json::from_slice::<StartResponse>(&resp.body) {
                 Ok(mut r) => {
                     let id = r.id_string();
                     match (id, r.rtmp.take(), r.key.take()) {
@@ -247,24 +327,31 @@ impl LiveProvider for StreamlabsProvider {
                         (_, mut rtmp, mut key) => {
                             rtmp.zeroize();
                             key.zeroize();
-                            let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-                            Err(body_error(status, &v).unwrap_or_else(|| {
+                            let v: Value = serde_json::from_slice(&resp.body).unwrap_or(Value::Null);
+                            Err(body_error(resp.status, &v).unwrap_or_else(|| {
                                 AppError::ProviderUnexpected("la respuesta no incluye id, rtmp y key".into())
                             }))
                         }
                     }
                 }
                 Err(_) => {
-                    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-                    Err(body_error(status, &v).unwrap_or_else(|| {
-                        AppError::ProviderUnexpected("respuesta de inicio de LIVE no reconocida".into())
+                    let v: Value = serde_json::from_slice(&resp.body).unwrap_or(Value::Null);
+                    Err(body_error(resp.status, &v).unwrap_or_else(|| {
+                        AppError::ProviderUnexpected(format!(
+                            "respuesta de inicio de LIVE no reconocida ({})",
+                            resp.content_type.as_deref().unwrap_or("sin tipo")
+                        ))
                     }))
                 }
             }
         } else {
-            Err(map_http_error(Op::Start, status, &body))
+            Err(map_http_error(Op::Start, resp.status, &resp.body))
         };
-        body.zeroize();
+        resp.body.zeroize();
+        match &result {
+            Ok(c) => self.diag(format!("{}: LIVE creado (id {})", Op::Start.name(), c.id)),
+            Err(e) => self.diag_error(Op::Start, e),
+        }
         result
     }
 
@@ -274,22 +361,27 @@ impl LiveProvider for StreamlabsProvider {
             .map_err(|_| AppError::Internal("URL base no válida".into()))?
             .push(id)
             .push(STREAM_END_SUFFIX);
-        let (status, body) = self.send(self.http.post(url).bearer_auth(token.expose())).await?;
-        if !(200..300).contains(&status) {
-            return Err(map_http_error(Op::End, status, &body));
+        let resp = self.send(Op::End, self.http.post(url).bearer_auth(token.expose())).await?;
+        let result = if !(200..300).contains(&resp.status) {
+            Err(map_http_error(Op::End, resp.status, &resp.body))
+        } else {
+            let v: Value = serde_json::from_slice(&resp.body).unwrap_or(Value::Null);
+            match body_error(resp.status, &v) {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
+        };
+        if let Err(e) = &result {
+            self.diag_error(Op::End, e);
         }
-        let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-        if let Some(e) = body_error(status, &v) {
-            return Err(e);
-        }
-        Ok(())
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::LiveAccess;
+    use crate::provider::{Availability, Field, UnavailableCause};
     use serde_json::json;
     use wiremock::matchers::{body_string_contains, header, method, path, query_param};
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -386,7 +478,7 @@ mod tests {
         assert_eq!(p.exchange_code(&Secret::new("bad"), &v).await.unwrap_err(), AppError::AuthExchangeRejected);
         assert!(matches!(p.exchange_code(&Secret::new("nofield"), &v).await.unwrap_err(), AppError::ProviderUnexpected(_)));
         assert_eq!(p.exchange_code(&Secret::new("fail"), &v).await.unwrap_err(), AppError::AuthExchangeRejected);
-        assert_eq!(p.exchange_code(&Secret::new("down"), &v).await.unwrap_err(), AppError::ProviderUnavailable(502));
+        assert_eq!(p.exchange_code(&Secret::new("down"), &v).await.unwrap_err(), AppError::ProviderUnavailable { status: 502, message: None });
     }
 
     #[tokio::test]
@@ -403,8 +495,9 @@ mod tests {
             .mount(&server)
             .await;
         let a = p.account_info(&token()).await.unwrap();
-        assert_eq!(a.live_access, LiveAccess::Rejected);
-        assert_eq!(a.can_be_live, Some(false));
+        assert_eq!(a.access.availability, Availability::NotAvailable { cause: UnavailableCause::Rejected });
+        assert_eq!(a.access.can_be_live, Field::Present { value: false });
+        assert_eq!(a.http_status, 200);
     }
 
     #[tokio::test]
@@ -484,11 +577,13 @@ mod tests {
     async fn start_error_responses() {
         let cases: Vec<(ResponseTemplate, ErrorCheck)> = vec![
             (ResponseTemplate::new(401).set_body_raw("Unauthorized.", "text/html"), |e| *e == AppError::TokenInvalid),
-            (ResponseTemplate::new(403).set_body_json(json!({"message": "Not allowed"})), |e| matches!(e, AppError::PermissionDenied(_))),
+            (ResponseTemplate::new(403).set_body_json(json!({"message": "Unable to go live. Please try again later"})), |e| matches!(e, AppError::ProviderForbidden { status: 403, message: Some(m) } if m.starts_with("Unable to go live"))),
+            (ResponseTemplate::new(400).set_body_json(json!({"data": {"code": "user_has_no_live_auth"}})), |e| matches!(e, AppError::PermissionDenied { .. })),
             (ResponseTemplate::new(403).set_body_raw("<html>cf</html>", "text/html"), |e| matches!(e, AppError::ProviderBlocked { .. })),
-            (ResponseTemplate::new(422).set_body_json(json!({})), |e| *e == AppError::AccountRestricted),
+            (ResponseTemplate::new(422).set_body_json(json!({})), |e| matches!(e, AppError::AccountRestricted { .. })),
             (ResponseTemplate::new(429), |e| *e == AppError::RateLimited),
-            (ResponseTemplate::new(500), |e| *e == AppError::ProviderUnavailable(500)),
+            (ResponseTemplate::new(500), |e| *e == AppError::ProviderUnavailable { status: 500, message: None }),
+            (ResponseTemplate::new(500).set_body_json(json!({"message": "Unable to go live. Please try again later"})), |e| e.provider_detail() == Some("Unable to go live. Please try again later")),
             (ResponseTemplate::new(200).set_body_json(json!({"success": false, "message": "Limit"})), |e| matches!(e, AppError::ProviderRejected { status: 200, .. })),
             (ResponseTemplate::new(200).set_body_json(json!({"id": "1"})), |e| matches!(e, AppError::ProviderUnexpected(_))),
             (ResponseTemplate::new(200).set_body_raw("<html>ok</html>", "text/html"), |e| matches!(e, AppError::ProviderUnexpected(_))),
@@ -552,6 +647,49 @@ mod tests {
             })
             .mount(&server)
             .await;
-        assert_eq!(p.account_info(&token()).await.unwrap().live_access, LiveAccess::Approved);
+        assert_eq!(p.account_info(&token()).await.unwrap().access.availability, Availability::Confirmed);
+    }
+
+    #[tokio::test]
+    async fn info_checks_content_type_before_parsing() {
+        let (server, p) = setup().await;
+        Mock::given(path(TIKTOK_INFO_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html>login</html>", "text/html"))
+            .mount(&server)
+            .await;
+        let e = p.account_info(&token()).await.unwrap_err();
+        assert!(matches!(e, AppError::ProviderUnexpected(ref m) if m.contains("text/html")), "{e:?}");
+    }
+
+    #[tokio::test]
+    async fn info_failures_never_look_like_rejection() {
+        for resp in [
+            ResponseTemplate::new(500).set_body_json(json!({"message": "boom"})),
+            ResponseTemplate::new(200).set_body_raw("{no json", "application/json"),
+            ResponseTemplate::new(200).set_body_json(json!(["no", "objeto"])),
+        ] {
+            let (server, p) = setup().await;
+            Mock::given(path(TIKTOK_INFO_PATH)).respond_with(resp).mount(&server).await;
+            let e = p.account_info(&token()).await.unwrap_err();
+            assert!(!matches!(e, AppError::PermissionDenied { .. } | AppError::LiveNotAvailable(_)), "{e:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn diagnostics_record_status_without_secrets() {
+        let server = MockServer::start().await;
+        let log = Arc::new(EventLog::default());
+        let p = StreamlabsProvider::with_base_url(&server.uri()).unwrap().with_diagnostics(log.clone());
+        Mock::given(path(STREAM_START_PATH))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"message": "Unable to go live. Please try again later", "key": "live_SECRET_999"})))
+            .mount(&server)
+            .await;
+        let _ = p.start_live(&token(), &req()).await;
+        let text: Vec<String> = log.entries().into_iter().map(|e| e.message).collect();
+        let all = text.join("\n");
+        assert!(all.contains("stream_start: 403 · application/json"), "{all}");
+        assert!(all.contains("category=id 123"), "{all}");
+        assert!(all.contains("Unable to go live"), "{all}");
+        assert!(!all.contains("tok_test_1234567890") && !all.contains("live_SECRET_999"), "{all}");
     }
 }

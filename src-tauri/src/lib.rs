@@ -38,13 +38,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            let provider = Arc::new(StreamlabsProvider::production()?);
+            let log = Arc::new(EventLog::default());
+            if let Ok(dir) = app.path().app_log_dir() {
+                log.set_file(dir.join("diagnostico.log"));
+            }
+            log.info(format!(
+                "TikTok OBS Connector {} iniciado ({} {}).",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ));
+            let provider = Arc::new(StreamlabsProvider::production()?.with_diagnostics(log.clone()));
             let core = Arc::new(AppCore::new(
                 provider,
                 Arc::new(KeyringStore),
                 Arc::new(opener::SystemOpener),
                 PreferencesStore::new(app.path().app_config_dir().ok()),
-                Arc::new(EventLog::default()),
+                log,
                 LOGIN_TIMEOUT,
             ));
             core.set_sink(Arc::new(TauriSink(app.handle().clone())));
@@ -58,6 +68,9 @@ pub fn run() {
             commands::auth_cancel,
             commands::auth_logout,
             commands::set_remember_session,
+            commands::account_refresh,
+            commands::open_access_page,
+            commands::copy_diagnostics,
             commands::categories_search,
             commands::stream_create,
             commands::stream_end,

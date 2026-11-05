@@ -1,7 +1,7 @@
 // Cuenta: iniciar sesión con TikTok mediante Streamlabs, estado y cierre de sesión.
 
 import { api } from "../api";
-import { accessInfo, formatCountdown } from "../lib/text";
+import { accessPresentation, errorText, formatCountdown } from "../lib/text";
 import { useApp, useNow } from "../useApp";
 import { Badge, Button, Callout, Card, Spinner } from "./ui";
 
@@ -61,11 +61,11 @@ export function AccountCard() {
 
   if (auth.status !== "signedIn") {
     return (
-      <Card title="Cuenta" aside={<Badge tone="neutral">Sin sesión</Badge>}>
+      <Card title="Cuenta">
         <p className="muted">
           Se abrirá el navegador con Streamlabs. Escribe tus credenciales de TikTok solo en esa página.
         </p>
-        {auth.accountError && <Callout tone="bad">{auth.accountError.message}</Callout>}
+        {auth.sessionError && <Callout tone="bad">{errorText(auth.sessionError)}</Callout>}
         <div className="row">
           <Button
             variant="primary"
@@ -80,27 +80,42 @@ export function AccountCard() {
     );
   }
 
-  const account = auth.account;
-  const info = account ? accessInfo(account.liveAccess, account.canBeLive) : null;
-  const name = account?.username || "cuenta vinculada";
+  const access = accessPresentation(auth.access);
+  const name = auth.username || "cuenta vinculada";
 
   return (
-    <Card title="Cuenta" aside={<Badge tone="ok">Conectada</Badge>}>
+    <Card title="Cuenta">
       <div className="account">
         <div className="avatar" aria-hidden>
           {name.charAt(0).toUpperCase()}
         </div>
         <div>
           <p className="lead">@{name}</p>
-          {info && <p className={`small tone-${info.tone}`}>{info.label}</p>}
+          <p className={`small tone-${access.tone}`}>
+            {access.checking && <Spinner label="Comprobando" />} {access.label}
+          </p>
         </div>
         <div className="spacer" />
         <Button variant="ghost" onClick={() => run("logout", () => api.logout(), "Sesión cerrada")} loading={pending.logout}>
           Cerrar sesión
         </Button>
       </div>
-      {info && info.tone !== "ok" && <p className="muted small">{info.description}</p>}
-      {!account && auth.accountError && <Callout tone="warn">{auth.accountError.message}</Callout>}
+
+      {access.description && <p className="muted small">{access.description}</p>}
+
+      {!access.canRequest && (
+        <div className="row">
+          <Button onClick={() => run("refresh", () => api.refreshAccount())} loading={pending.refresh || access.checking}>
+            Actualizar estado
+          </Button>
+          {access.offerAccessLinks && (
+            <>
+              <Button onClick={() => run("status", () => api.openAccessPage("status"))}>Consultar estado</Button>
+              <Button onClick={() => run("apply", () => api.openAccessPage("apply"))}>Solicitar acceso</Button>
+            </>
+          )}
+        </div>
+      )}
       {remember}
     </Card>
   );

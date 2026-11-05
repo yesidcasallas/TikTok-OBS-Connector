@@ -3,6 +3,7 @@ import { CredentialsCard } from "./components/CredentialsCard";
 import { StreamForm } from "./components/StreamForm";
 import { Badge, Spinner } from "./components/ui";
 import { useApp } from "./useApp";
+import { api } from "./api";
 
 function Toasts() {
   const { toasts, dismiss } = useApp();
@@ -24,7 +25,7 @@ function Toasts() {
 }
 
 export default function App() {
-  const { snapshot } = useApp();
+  const { snapshot, run } = useApp();
   if (!snapshot) {
     return (
       <div className="loading">
@@ -39,11 +40,11 @@ export default function App() {
       <header className="top">
         <h1>TikTok OBS Connector</h1>
         {auth.status === "signedIn" ? (
-          <Badge tone="ok">Conectado</Badge>
+          <Badge tone="ok">Sesión iniciada</Badge>
         ) : auth.status === "pending" ? (
-          <Badge tone="warn">Conectando…</Badge>
+          <Badge tone="warn">Iniciando sesión…</Badge>
         ) : (
-          <Badge tone="neutral">Desconectado</Badge>
+          <Badge tone="neutral">Sin sesión</Badge>
         )}
       </header>
 
@@ -59,7 +60,14 @@ export default function App() {
       </main>
 
       <footer>
-        No afiliado a TikTok ni a Streamlabs. Iniciar sesión no garantiza el acceso a LIVE: lo decide TikTok.
+        <span>No afiliado a TikTok ni a Streamlabs.</span>
+        <button
+          type="button"
+          className="link"
+          onClick={() => run("diag", () => api.copyDiagnostics(), "Diagnóstico copiado")}
+        >
+          Copiar diagnóstico
+        </button>
       </footer>
       <Toasts />
     </div>

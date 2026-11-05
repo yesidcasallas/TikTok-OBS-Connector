@@ -21,24 +21,84 @@ pub struct AuthGrant {
     pub platform: Option<String>,
 }
 
-/// Estado del acceso a LIVE según el proveedor.
+/// Valor de un campo de la respuesta que conserva la diferencia entre
+/// presente, ausente (o `null`) y presente con un tipo inesperado.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum Field<T> {
+    Present { value: T },
+    Missing,
+    /// `found` es el tipo JSON recibido (nunca el valor).
+    Invalid { found: String },
+}
+
+impl<T> Field<T> {
+    pub fn value(&self) -> Option<&T> {
+        match self {
+            Field::Present { value } => Some(value),
+            _ => None,
+        }
+    }
+}
+
+/// Ámbito del acceso según `reason` y `application_status`
+/// (réplica de `convertScope` de Streamlabs Desktop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum LiveAccess {
-    /// Aprobada para generar servidor y clave mediante Streamlabs.
+pub enum LiveScope {
+    /// `reason = 1`: aprobada para generar servidor y clave mediante Streamlabs.
     Approved,
-    /// Acceso "legacy": la clave se obtiene en TikTok LIVE Producer, no aquí.
+    /// `reason = 2`: acceso «legacy»; la clave se obtiene en TikTok LIVE Producer.
     Legacy,
-    /// No aprobada (incluye cuentas denegadas).
+    /// `reason = 0`.
     NotApproved,
-    /// Nunca solicitó acceso.
+    /// `application_status = never_applied`.
     NeverApplied,
-    /// Solicitud rechazada.
+    /// `reason = 0` y `application_status = rejected`.
     Rejected,
-    /// El proveedor pide volver a iniciar sesión (permisos desactualizados).
+    /// `reason = -1`: Streamlabs pide volver a iniciar sesión.
     Relog,
-    /// El proveedor no indicó el estado.
+    /// Falta `reason` o tiene un valor o tipo no reconocido.
     Unknown,
+}
+
+/// Motivo identificado por el proveedor por el que no se puede emitir.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnavailableCause {
+    NotApproved,
+    NeverApplied,
+    Rejected,
+    Legacy,
+    Relog,
+    /// `can_be_live = false` sin un `reason` reconocible.
+    CannotGoLive,
+}
+
+/// Conclusión sobre el permiso de emisión.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Availability {
+    /// Permiso de emisión confirmado por el proveedor.
+    Confirmed,
+    /// El proveedor identifica que la emisión no está disponible.
+    NotAvailable { cause: UnavailableCause },
+    /// Los campos se contradicen: hay que actualizar la comprobación.
+    Contradictory { detail: String },
+    /// La respuesta no permite saberlo (campos ausentes o con tipo inesperado).
+    Unknown { detail: String },
+}
+
+/// Campos de estado de `/tiktok/info` y su interpretación.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessCheck {
+    pub reason: Field<i64>,
+    pub can_be_live: Field<bool>,
+    pub application_status: Field<String>,
+    pub user_present: bool,
+    pub scope: LiveScope,
+    pub availability: Availability,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,16 +116,16 @@ pub struct AudienceControls {
     pub options: Vec<AudienceOption>,
 }
 
+/// Resultado completo de una comprobación de cuenta y acceso.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountInfo {
-    pub username: String,
+    pub username: Option<String>,
     pub display_name: Option<String>,
-    pub live_access: LiveAccess,
-    pub can_be_live: Option<bool>,
-    pub application_status: Option<String>,
-    pub application_timestamp: Option<String>,
+    pub access: AccessCheck,
     pub audience: AudienceControls,
+    pub http_status: u16,
+    pub duration_ms: u64,
     pub checked_at_ms: u64,
 }
 
@@ -102,6 +162,7 @@ pub trait LiveProvider: CallbackInterpreter {
 
     async fn exchange_code(&self, code: &Secret, verifier: &Secret) -> AppResult<AuthGrant>;
 
+    /// Solo lectura: nunca crea sesiones LIVE.
     async fn account_info(&self, token: &Secret) -> AppResult<AccountInfo>;
 
     async fn search_categories(&self, token: &Secret, query: &str) -> AppResult<Vec<Category>>;

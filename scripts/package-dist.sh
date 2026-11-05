@@ -8,7 +8,9 @@ cd "$(dirname "$0")/.."
 TARGET="${1:-}"
 TARGET_DIR="${CARGO_TARGET_DIR:-src-tauri/target}"
 NSIS_DIR="$TARGET_DIR/${TARGET:+$TARGET/}release/bundle/nsis"
+VERSION=$(node -p "require('./package.json').version")
+SETUP=$(ls "$NSIS_DIR"/*_"${VERSION}"_*-setup.exe | head -1)   # solo el de la versión actual
 rm -rf dist && mkdir -p dist/installer
-cp "$NSIS_DIR"/*-setup.exe dist/installer/TikTok-OBS-Connector-Setup.exe
+cp "$SETUP" dist/installer/TikTok-OBS-Connector-Setup.exe
 sha256sum dist/installer/TikTok-OBS-Connector-Setup.exe
 ls -la dist/installer

@@ -1,6 +1,6 @@
 [package]
 name = "tiktok-obs-connector"
-version = "2.0.0"
+version = "2.1.0"
 description = "Obtén el servidor y la clave de TikTok LIVE para OBS iniciando sesión mediante Streamlabs"
 authors = ["TikTok OBS Connector"]
 license = "GPL-3.0-or-later"

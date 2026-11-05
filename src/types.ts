@@ -3,19 +3,29 @@
 
 export type AuthStatus = "signedOut" | "pending" | "signedIn";
 
-export type LiveAccess =
-  | "approved"
-  | "legacy"
-  | "notApproved"
-  | "neverApplied"
-  | "rejected"
-  | "relog"
-  | "unknown";
+/** Campo de la respuesta: presente, ausente/nulo o con tipo inesperado. */
+export type Field<T> =
+  | { state: "present"; value: T }
+  | { state: "missing" }
+  | { state: "invalid"; found: string };
+
+export type LiveScope = "approved" | "legacy" | "notApproved" | "neverApplied" | "rejected" | "relog" | "unknown";
+
+export type UnavailableCause = "notApproved" | "neverApplied" | "rejected" | "legacy" | "relog" | "cannotGoLive";
+
+export type Availability =
+  | { kind: "confirmed" }
+  | { kind: "notAvailable"; cause: UnavailableCause }
+  | { kind: "contradictory"; detail: string }
+  | { kind: "unknown"; detail: string };
 
 export interface ErrorInfo {
   code: string;
   category: string;
   message: string;
+  /** Mensaje original del proveedor (saneado). */
+  detail: string | null;
+  httpStatus: number | null;
 }
 
 export interface AudienceOption {
@@ -29,16 +39,31 @@ export interface AudienceControls {
   options: AudienceOption[];
 }
 
+export interface AccessCheck {
+  reason: Field<number>;
+  canBeLive: Field<boolean>;
+  applicationStatus: Field<string>;
+  userPresent: boolean;
+  scope: LiveScope;
+  availability: Availability;
+}
+
 export interface AccountInfo {
-  username: string;
+  username: string | null;
   displayName: string | null;
-  liveAccess: LiveAccess;
-  canBeLive: boolean | null;
-  applicationStatus: string | null;
-  applicationTimestamp: string | null;
+  access: AccessCheck;
   audience: AudienceControls;
+  httpStatus: number;
+  durationMs: number;
   checkedAtMs: number;
 }
+
+/** Estado de la comprobación del permiso (separado de la sesión). */
+export type AccessView =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "done"; account: AccountInfo }
+  | { state: "failed"; error: ErrorInfo };
 
 export interface PendingView {
   loginUrl: string;
@@ -55,8 +80,9 @@ export type Persistence =
 export interface AuthView {
   status: AuthStatus;
   pending: PendingView | null;
-  account: AccountInfo | null;
-  accountError: ErrorInfo | null;
+  username: string | null;
+  access: AccessView;
+  sessionError: ErrorInfo | null;
   remember: boolean;
   persistence: Persistence;
 }
@@ -106,3 +132,4 @@ export interface StartLiveRequest {
 }
 
 export type CopyField = "server" | "key" | "loginUrl";
+export type AccessPage = "apply" | "status";

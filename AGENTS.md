@@ -62,6 +62,11 @@ src-tauri/src/
 - Son **endpoints internos no documentados**. Todo lo específico va en `provider/streamlabs/`. Si cambian, se actualizan `endpoints.rs`, `models.rs` y `errors.rs`, y el contrato de `tests/streamlabs_contract.rs`.
 - **No suplante plataformas ni clientes:** `device_platform` es el sistema real (`win32` en Windows) y el User-Agent identifica a esta app.
 - Distinga siempre autenticación correcta, token inválido (401), permisos insuficientes y fallo del proveedor. Iniciar sesión no implica acceso a LIVE.
+- **Un código HTTP o un mensaje genérico no prueban la causa:** `PermissionDenied` solo se usa con códigos explícitos del proveedor. Un 403 sin código es `ProviderForbidden`, y el mensaje original del proveedor se conserva siempre en `detail`.
+- El permiso de emisión se modela con `Field<T>` (presente, ausente o inválido) y `Availability` (`provider/mod.rs`, tabla en `models.rs::availability_of`). Un campo ausente o inválido da «desconocido», nunca «no aprobada».
+- `start_stream` exige `Availability::Confirmed`, igual que el botón (`ensure_live_permission`). Nunca reintente automáticamente la creación de un LIVE, y no cree sesiones LIVE al comprobar permisos ni en las pruebas.
+- Las comprobaciones (`refresh_account`) no retienen el candado; `session_gen` y `check_seq` descartan respuestas tardías o de sesiones anteriores.
+- Diagnóstico: `EventLog` (memoria y `diagnostico.log`, con rotación). Registre solo operación, código HTTP, tipo de contenido, duración, campos de estado y errores saneados.
 - Las credenciales de TikTok solo se escriben en la página del proveedor. Prohibido extraer cookies o tokens de otras aplicaciones (por ejemplo, del almacenamiento de Streamlabs Desktop).
 
 ### Seguridad de Tauri y concurrencia

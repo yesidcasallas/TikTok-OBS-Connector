@@ -11,12 +11,14 @@ Hecha con **Rust + Tauri 2** y **React + TypeScript**. Interfaz mínima, en espa
 ## Funciones
 
 - Iniciar sesión con TikTok mediante Streamlabs en el navegador del sistema (OAuth con PKCE). Tus credenciales solo se escriben en la página de Streamlabs/TikTok.
-- Ver la cuenta vinculada y su estado de acceso a LIVE.
+- Ver la cuenta vinculada y, por separado, el **permiso de emisión**: confirmado, sin acceso o sin confirmar. Incluye «Actualizar estado».
+- **Consultar estado** y **Solicitar acceso** en las páginas oficiales de TikTok para Streamlabs cuando la cuenta no tiene permiso. Streamlabs no muestra las solicitudes en revisión (sigue respondiendo `never_applied`), así que el estado real se consulta en TikTok. El formulario del LIVE solo aparece con el permiso confirmado.
 - Elegir el título y la categoría (búsqueda de categorías de TikTok).
-- **Obtener servidor y clave**. ⚠️ Esto crea una sesión LIVE en tu cuenta.
+- **Obtener servidor y clave**: solo se habilita con permiso confirmado, y Rust aplica la misma regla. ⚠️ Esto crea una sesión LIVE en tu cuenta.
 - Copiar el servidor y la clave. La clave está oculta por defecto.
 - **Finalizar LIVE** desde la aplicación.
 - Cerrar sesión. Opcionalmente, recordar la sesión en el Administrador de credenciales de Windows.
+- **Copiar diagnóstico**, sin tokens ni claves, para informar de problemas.
 
 ## Instalación
 
@@ -48,6 +50,21 @@ La clave cambia en cada LIVE.
 | Finalizar | `POST /api/v5/slobs/tiktok/stream/{id}/end` |
 
 El contrato se verificó el 4 de noviembre de 2026 a partir de dos fuentes: el código abierto de [Streamlabs Desktop](https://github.com/streamlabs/desktop) y el proyecto de referencia [StreamLabsTikTokStreamKeyGenerator](https://github.com/Loukious/StreamLabsTikTokStreamKeyGenerator). Todo lo específico de Streamlabs está aislado en `src-tauri/src/provider/streamlabs/`: si el API cambia, solo hay que tocar esa carpeta.
+
+### Permiso de emisión
+
+La app lee `reason`, `can_be_live` y `application_status.status` de `/tiktok/info` con **tipos estrictos**. Un campo ausente, nulo o con un tipo inesperado da un estado **desconocido**, nunca «no aprobada».
+
+| `reason` \ `can_be_live` | `true` | `false` | ausente o inválido |
+|---|---|---|---|
+| `1` (aprobada) | confirmado | contradictorio | confirmado (Streamlabs Desktop solo usa `reason`) |
+| `0`, `never_applied`, `rejected` | contradictorio | no disponible | no disponible |
+| `2` (legacy) o `-1` (volver a entrar) | no disponible | no disponible | no disponible |
+| ausente o inválido | confirmado (la referencia usa `can_be_live`) | no disponible | **desconocido** |
+
+Streamlabs Desktop solo pide credenciales con la cuenta aprobada, y esta app hace lo mismo. Cuando el proveedor devuelve un error genérico (por ejemplo, `Unable to go live. Please try again later`), la app muestra su mensaje original y el código HTTP **sin afirmar una causa**. Solo dice «sin permiso» si Streamlabs envía un código explícito (`user_has_no_live_auth`, `scope_not_authorized`, `scope_permission_missed`).
+
+**Diagnóstico:** `%LOCALAPPDATA%\com.tiktokobsconnector.app\logs\diagnostico.log` registra la operación, el código HTTP, el tipo de contenido, la duración, los campos de estado y los errores saneados. Nunca registra tokens, claves, cookies, cuerpos completos ni URLs con credenciales.
 
 La aplicación se identifica con su propio User-Agent y con la plataforma real (`device_platform=win32`, el mismo valor que envía Streamlabs Desktop en Windows).
 

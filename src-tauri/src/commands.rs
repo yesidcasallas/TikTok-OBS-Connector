@@ -1,7 +1,7 @@
 //! Comandos Tauri: única puerta de entrada del frontend. Ninguno devuelve el
 //! token; la clave de transmisión solo sale con `stream_reveal_key`.
 
-use crate::app_core::{AppCore, CopyField, Snapshot};
+use crate::app_core::{AccessPage, AppCore, CopyField, Snapshot};
 use crate::error::{AppError, AppResult};
 use crate::provider::{Category, StartLiveRequest};
 use std::sync::Arc;
@@ -44,6 +44,26 @@ pub async fn auth_cancel(core: Core<'_>) -> AppResult<()> {
 #[tauri::command]
 pub async fn auth_logout(core: Core<'_>) -> AppResult<Snapshot> {
     core.logout(false).await
+}
+
+/// «Actualizar estado»: vuelve a consultar el permiso (solo lectura).
+#[tauri::command]
+pub async fn account_refresh(core: Core<'_>) -> AppResult<Snapshot> {
+    core.refresh_account().await
+}
+
+/// Abre la página oficial de TikTok para solicitar o consultar el acceso.
+#[tauri::command]
+pub async fn open_access_page(core: Core<'_>, page: AccessPage) -> AppResult<()> {
+    core.open_access_page(page).await
+}
+
+/// Copia el diagnóstico (redactado) al portapapeles.
+#[tauri::command]
+pub async fn copy_diagnostics(app: AppHandle, core: Core<'_>) -> AppResult<()> {
+    app.clipboard()
+        .write_text(core.diagnostics_text())
+        .map_err(|e| AppError::Clipboard(e.to_string()))
 }
 
 #[tauri::command]

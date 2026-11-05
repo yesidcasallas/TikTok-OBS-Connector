@@ -1,46 +1,80 @@
 // Utilidades puras de presentación (con pruebas en text.test.ts).
 
-import type { LiveAccess } from "../types";
+import type { AccessView, ErrorInfo, UnavailableCause } from "../types";
 
 export type Tone = "ok" | "warn" | "bad" | "neutral";
 
-export interface AccessInfo {
+export interface AccessPresentation {
   label: string;
   tone: Tone;
   description: string;
+  /** El botón «Obtener servidor y clave» solo se habilita con permiso confirmado. */
+  canRequest: boolean;
+  /** Ofrecer «Consultar estado» y «Solicitar acceso». */
+  offerAccessLinks: boolean;
+  checking: boolean;
 }
 
-export function accessInfo(access: LiveAccess, canBeLive: boolean | null): AccessInfo {
-  switch (access) {
-    case "approved":
-      return { label: "Acceso a LIVE aprobado", tone: "ok", description: "" };
-    case "legacy":
-      return {
-        label: "Acceso legacy",
-        tone: "warn",
-        description: "Para este tipo de acceso, Streamlabs no genera la clave: obtenla en TikTok LIVE Producer.",
-      };
-    case "notApproved":
-    case "neverApplied":
-    case "rejected":
-      return {
-        label: "Sin acceso a LIVE",
-        tone: "bad",
-        description: "Streamlabs indica que esta cuenta no está aprobada para emitir en TikTok LIVE.",
-      };
-    case "relog":
-      return {
-        label: "Vuelve a iniciar sesión",
-        tone: "warn",
-        description: "Streamlabs pide volver a iniciar sesión para actualizar los permisos.",
-      };
-    default:
-      return {
-        label: "Acceso a LIVE sin confirmar",
-        tone: canBeLive === false ? "bad" : "neutral",
-        description: "Streamlabs no indicó el estado del acceso. Si no hay permiso, se mostrará el motivo.",
-      };
+const CAUSE_TEXT: Record<UnavailableCause, string> = {
+  notApproved: "Según Streamlabs, tu cuenta no tiene acceso a LIVE desde PC.",
+  neverApplied: "Streamlabs aún no registra tu acceso. Si ya enviaste la solicitud, consulta su estado en TikTok.",
+  rejected: "Según Streamlabs, TikTok rechazó tu solicitud de acceso.",
+  legacy: "Tu clave se obtiene en TikTok LIVE Producer, no con Streamlabs.",
+  relog: "Cierra sesión y vuelve a entrar para actualizar los permisos.",
+  cannotGoLive: "Según Streamlabs, ahora no puedes emitir.",
+};
+
+/** Valores documentados de `application_status.status` (`TTikTokApplicationStatus`). */
+const KNOWN_APPLICATION_STATUS = ["approved", "rejected", "never_applied"];
+
+export function accessPresentation(access: AccessView): AccessPresentation {
+  const base = { canRequest: false, offerAccessLinks: false, checking: false };
+  switch (access.state) {
+    case "idle":
+      return { ...base, label: "Acceso sin comprobar", tone: "neutral", description: "" };
+    case "checking":
+      return { ...base, checking: true, label: "Comprobando acceso…", tone: "neutral", description: "" };
+    case "failed":
+      return { ...base, label: "No se pudo comprobar el acceso", tone: "warn", description: access.error.message };
+    case "done": {
+      const a = access.account.access.availability;
+      switch (a.kind) {
+        case "confirmed":
+          return { ...base, canRequest: true, label: "Acceso a LIVE confirmado", tone: "ok", description: "" };
+        case "notAvailable": {
+          const status = access.account.access.applicationStatus;
+          const unrecognized =
+            status.state === "present" && !KNOWN_APPLICATION_STATUS.includes(status.value) ? status.value : null;
+          return {
+            ...base,
+            offerAccessLinks: a.cause !== "legacy" && a.cause !== "relog",
+            label: "Sin acceso a LIVE",
+            tone: "bad",
+            description: unrecognized
+              ? `Estado de la solicitud según Streamlabs: «${unrecognized}».`
+              : CAUSE_TEXT[a.cause],
+          };
+        }
+        case "contradictory":
+        case "unknown":
+          return {
+            ...base,
+            offerAccessLinks: true,
+            label: "Acceso sin confirmar",
+            tone: "warn",
+            description: "Streamlabs no lo deja claro. Actualiza el estado.",
+          };
+      }
+    }
   }
+}
+
+/** Texto del aviso de error: explicación propia + mensaje original del proveedor. */
+export function errorText(e: ErrorInfo): string {
+  const parts = [e.message];
+  if (e.detail) parts.push(`Mensaje de Streamlabs: «${e.detail}»`);
+  if (e.httpStatus && !e.message.includes(`HTTP ${e.httpStatus}`)) parts.push(`(HTTP ${e.httpStatus})`);
+  return parts.join("\n");
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
