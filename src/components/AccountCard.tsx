@@ -1,13 +1,55 @@
 // Cuenta: iniciar sesión con TikTok mediante Streamlabs, estado y cierre de sesión.
 
+import { useState } from "react";
 import { api } from "../api";
-import { accessPresentation, errorText, formatCountdown } from "../lib/text";
+import { accessPresentation, errorText, formatCountdown, REQUEST_ACCESS_TEXT } from "../lib/text";
 import { useApp, useNow } from "../useApp";
 import { Badge, Button, Callout, Card, Spinner } from "./ui";
+
+/** Guía breve antes de abrir el formulario oficial de TikTok. */
+function RequestGuide({
+  username,
+  provider,
+  onOpen,
+  onCancel,
+}: {
+  username: string | null;
+  provider: string;
+  onOpen: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="guide" role="group" aria-label="Cómo solicitar el acceso">
+      <p className="lead">Antes de abrir TikTok</p>
+      <ol className="steps">
+        <li>
+          Inicia sesión en TikTok con la misma cuenta{username ? <> (<strong>@{username}</strong>)</> : null}.
+        </li>
+        <li>Selecciona la plataforma donde ya transmites e introduce el enlace de tu canal.</li>
+        <li>Completa los datos que pida TikTok.</li>
+        <li>Adjunta las capturas que TikTok solicite para acreditar la titularidad o actividad del canal.</li>
+        <li>Envía la solicitud y regresa a esta aplicación.</li>
+      </ol>
+      <p className="muted small">
+        Todo se completa en el formulario oficial de TikTok para {provider}; sigue lo que te pida. Abrirlo no envía la
+        solicitud, y la aprobación la decide TikTok.
+      </p>
+      <div className="row">
+        <Button variant="primary" onClick={onOpen}>
+          Abrir solicitud en TikTok
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export function AccountCard() {
   const { snapshot, run, pending } = useApp();
   const now = useNow();
+  const [guide, setGuide] = useState(false);
   if (!snapshot) return null;
   const { auth } = snapshot;
 
@@ -82,6 +124,14 @@ export function AccountCard() {
 
   const access = accessPresentation(auth.access);
   const name = auth.username || "cuenta vinculada";
+  const refresh = (
+    <Button onClick={() => run("refresh", () => api.refreshAccount())} loading={pending.refresh || access.checking}>
+      Actualizar estado
+    </Button>
+  );
+  const consult = (
+    <Button onClick={() => run("status", () => api.openAccessPage("status"))}>Consultar mi solicitud</Button>
+  );
 
   return (
     <Card title="Cuenta">
@@ -101,20 +151,50 @@ export function AccountCard() {
         </Button>
       </div>
 
-      {access.description && <p className="muted small">{access.description}</p>}
-
-      {!access.canRequest && (
-        <div className="row">
-          <Button onClick={() => run("refresh", () => api.refreshAccount())} loading={pending.refresh || access.checking}>
-            Actualizar estado
-          </Button>
-          {access.offerAccessLinks && (
-            <>
-              <Button onClick={() => run("status", () => api.openAccessPage("status"))}>Consultar estado</Button>
-              <Button onClick={() => run("apply", () => api.openAccessPage("apply"))}>Solicitar acceso</Button>
-            </>
+      {access.mode === "request" && (
+        <>
+          <p>{REQUEST_ACCESS_TEXT}</p>
+          {access.description && <p className="muted small">{access.description}</p>}
+          {guide ? (
+            <RequestGuide
+              username={auth.username}
+              provider={snapshot.app.provider}
+              onOpen={() => {
+                setGuide(false);
+                run("apply", () => api.openAccessPage("apply"));
+              }}
+              onCancel={() => setGuide(false)}
+            />
+          ) : (
+            <div className="row">
+              <Button variant="primary" onClick={() => setGuide(true)}>
+                Solicitar acceso a LIVE
+              </Button>
+              {consult}
+              {refresh}
+            </div>
           )}
-        </div>
+        </>
+      )}
+
+      {access.mode === "pending" && (
+        <>
+          <p className="muted small">{access.description}</p>
+          <div className="row">
+            {consult}
+            {refresh}
+          </div>
+        </>
+      )}
+
+      {(access.mode === "blocked" || access.mode === "unknown" || access.mode === "idle") && (
+        <>
+          {access.description && <p className="muted small">{access.description}</p>}
+          <div className="row">
+            {access.mode === "unknown" && consult}
+            {refresh}
+          </div>
+        </>
       )}
       {remember}
     </Card>

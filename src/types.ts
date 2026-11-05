@@ -9,9 +9,24 @@ export type Field<T> =
   | { state: "missing" }
   | { state: "invalid"; found: string };
 
-export type LiveScope = "approved" | "legacy" | "notApproved" | "neverApplied" | "rejected" | "relog" | "unknown";
+export type LiveScope =
+  | "approved"
+  | "legacy"
+  | "notApproved"
+  | "neverApplied"
+  | "rejected"
+  | "relog"
+  | "pending"
+  | "unknown";
 
-export type UnavailableCause = "notApproved" | "neverApplied" | "rejected" | "legacy" | "relog" | "cannotGoLive";
+export type UnavailableCause =
+  | "notApproved"
+  | "neverApplied"
+  | "rejected"
+  | "legacy"
+  | "relog"
+  | "cannotGoLive"
+  | "pending";
 
 export type Availability =
   | { kind: "confirmed" }

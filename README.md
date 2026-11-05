@@ -12,7 +12,8 @@ Hecha con **Rust + Tauri 2** y **React + TypeScript**. Interfaz mínima, en espa
 
 - Iniciar sesión con TikTok mediante Streamlabs en el navegador del sistema (OAuth con PKCE). Tus credenciales solo se escriben en la página de Streamlabs/TikTok.
 - Ver la cuenta vinculada y, por separado, el **permiso de emisión**: confirmado, sin acceso o sin confirmar. Incluye «Actualizar estado».
-- **Consultar estado** y **Solicitar acceso** en las páginas oficiales de TikTok para Streamlabs cuando la cuenta no tiene permiso. Streamlabs no muestra las solicitudes en revisión (sigue respondiendo `never_applied`), así que el estado real se consulta en TikTok. El formulario del LIVE solo aparece con el permiso confirmado.
+- **Solicitar acceso a LIVE** cuando la cuenta está conectada pero sin permiso. Antes de abrir TikTok, la app muestra una guía breve: entrar con la misma cuenta, indicar la plataforma y el enlace del canal donde ya transmites, completar los datos y adjuntar las capturas que pida TikTok. El formulario es el oficial de TikTok **para el mismo proveedor** que emite las credenciales (Streamlabs, id `GL6399433079641606942`); las URLs están en `src-tauri/src/provider/access_pages.rs`.
+- **Consultar mi solicitud** (página de estado de TikTok) y **Actualizar estado**. Al volver a la app se comprueba el permiso automáticamente, como mucho una vez cada 30 s. Abrir el formulario no cambia nada: el estado solo cambia con la respuesta de Streamlabs. Mientras TikTok revisa una solicitud, Streamlabs sigue respondiendo `never_applied`, así que el estado real se ve en «Consultar mi solicitud». El formulario del LIVE solo aparece con el permiso confirmado.
 - Elegir el título y la categoría (búsqueda de categorías de TikTok).
 - **Obtener servidor y clave**: solo se habilita con permiso confirmado, y Rust aplica la misma regla. ⚠️ Esto crea una sesión LIVE en tu cuenta.
 - Copiar el servidor y la clave. La clave está oculta por defecto.

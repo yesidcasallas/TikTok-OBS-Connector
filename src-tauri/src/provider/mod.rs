@@ -4,6 +4,7 @@
 //! respuestas, significado de los códigos) vive en [`streamlabs`]. Si el API
 //! interno cambia, solo hay que tocar ese módulo.
 
+pub mod access_pages;
 pub mod streamlabs;
 
 use crate::auth::CallbackInterpreter;
@@ -62,6 +63,8 @@ pub enum LiveScope {
     Rejected,
     /// `reason = -1`: Streamlabs pide volver a iniciar sesión.
     Relog,
+    /// `application_status` indica una solicitud pendiente de revisión.
+    Pending,
     /// Falta `reason` o tiene un valor o tipo no reconocido.
     Unknown,
 }
@@ -77,6 +80,8 @@ pub enum UnavailableCause {
     Relog,
     /// `can_be_live = false` sin un `reason` reconocible.
     CannotGoLive,
+    /// El proveedor indica que la solicitud está pendiente de revisión.
+    Pending,
 }
 
 /// Conclusión sobre el permiso de emisión.
@@ -160,6 +165,9 @@ pub struct LiveCredentials {
 #[async_trait]
 pub trait LiveProvider: CallbackInterpreter {
     fn display_name(&self) -> &'static str;
+
+    /// Páginas de TikTok para solicitar y consultar el acceso con ESTE proveedor.
+    fn access_pages(&self) -> &'static access_pages::AccessPages;
 
     /// URL de login que se abre en el navegador del sistema.
     fn login_url(&self, port: u16, code_challenge: &str) -> String;

@@ -236,6 +236,10 @@ impl LiveProvider for StreamlabsProvider {
         "Streamlabs"
     }
 
+    fn access_pages(&self) -> &'static crate::provider::access_pages::AccessPages {
+        &crate::provider::access_pages::STREAMLABS
+    }
+
     fn login_url(&self, port: u16, code_challenge: &str) -> String {
         let base = self.base.as_str().trim_end_matches('/');
         let flags: Vec<String> = LOGIN_FLAGS

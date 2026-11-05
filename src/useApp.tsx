@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, onState, toErrorInfo } from "./api";
-import { errorText } from "./lib/text";
+import { errorText, shouldRefreshOnFocus } from "./lib/text";
 import type { Snapshot } from "./types";
 
 export type ToastKind = "success" | "error" | "info";
@@ -94,6 +94,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [notify],
   );
+
+  // Al volver a la aplicación (p. ej., tras enviar la solicitud en TikTok),
+  // comprueba el permiso sin repetir peticiones: como mucho una vez cada 30 s,
+  // nunca durante otra comprobación y nunca si ya está confirmado.
+  const lastFocusCheck = useRef(0);
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === "hidden" || !snapshot) return;
+      const now = Date.now();
+      if (!shouldRefreshOnFocus(snapshot.auth.status === "signedIn", snapshot.auth.access, lastFocusCheck.current, now)) {
+        return;
+      }
+      lastFocusCheck.current = now;
+      api.refreshAccount().then(setSnapshot).catch(() => {
+        // El error queda reflejado en el estado (comprobación fallida).
+        api.getState().then(setSnapshot).catch(() => {});
+      });
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [snapshot]);
 
   const value = useMemo(
     () => ({ snapshot, toasts, notify, dismiss, run, pending }),

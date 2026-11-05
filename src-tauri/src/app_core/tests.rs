@@ -637,14 +637,18 @@ async fn access_pages_open_verified_urls() {
     core.open_access_page(AccessPage::Apply).await.unwrap();
     core.open_access_page(AccessPage::Status).await.unwrap();
     let opened = env.browser.opened.lock().unwrap().clone();
+    // Las páginas corresponden al proveedor activo (Streamlabs), no a otro.
+    let pages = &crate::provider::access_pages::STREAMLABS;
     assert_eq!(
         opened,
-        vec![ACCESS_APPLY_URL.to_string(), ACCESS_STATUS_URL.to_string()]
+        vec![pages.apply_url.to_string(), pages.status_url.to_string()]
     );
-    assert!(
-        ACCESS_APPLY_URL.contains("live_access_pc_apply/intro")
-            && ACCESS_APPLY_URL.contains("GL6399433079641606942")
-    );
+    assert!(opened
+        .iter()
+        .all(|u| u.contains("GL6399433079641606942") && !u.contains("SE7403650104517334022")));
+    assert!(opened[1].contains("apply_mode=8"));
+    // Abrir el formulario no cambia el estado de acceso.
+    assert!(matches!(core.snapshot().auth.access, AccessView::Idle));
 }
 
 #[tokio::test]
@@ -791,4 +795,44 @@ async fn ending_a_live_unknown_to_the_provider_clears_it() {
     core.login().await.unwrap();
     core.start_stream(request()).await.unwrap();
     assert!(core.end_stream().await.unwrap().stream.is_none());
+}
+
+#[tokio::test]
+async fn pending_application_keeps_start_disabled_until_approved() {
+    let env = Env::new().await;
+    env.mock_exchange_ok().await;
+    // Llamada 0 (login): solicitud en revisión. Llamadas siguientes: aprobada.
+    Mock::given(path(TIKTOK_INFO_PATH))
+        .respond_with(Sequenced {
+            calls: AtomicUsize::new(0),
+            slow: 0,
+            delay: Duration::from_millis(0),
+            slow_body: json!({"reason": 0, "can_be_live": false, "user": {"username": "creadora"},
+                              "application_status": {"status": "pending"}}),
+            fast_body: info_body(1),
+        })
+        .mount(&env.server)
+        .await;
+    env.mock_start_ok().await;
+    let core = env.core();
+    core.login().await.unwrap();
+    assert_eq!(
+        availability(&core),
+        Availability::NotAvailable {
+            cause: UnavailableCause::Pending
+        }
+    );
+    assert!(matches!(
+        core.start_stream(request()).await.unwrap_err(),
+        AppError::LiveNotAvailable(_)
+    ));
+    // Al volver de TikTok, «Actualizar estado» refleja la aprobación sin crear un LIVE.
+    core.refresh_account().await.unwrap();
+    assert_eq!(availability(&core), Availability::Confirmed);
+    assert!(
+        core.snapshot().stream.is_none(),
+        "actualizar el estado no crea un LIVE"
+    );
+    // Solo ahora se permite obtener servidor y clave.
+    assert!(core.start_stream(request()).await.unwrap().stream.is_some());
 }

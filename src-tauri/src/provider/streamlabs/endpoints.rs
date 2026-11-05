@@ -70,16 +70,3 @@ pub fn user_agent() -> String {
         std::env::consts::ARCH
     )
 }
-
-/// Identificador de la aplicación de acceso a LIVE desde PC de Streamlabs en
-/// TikTok (`get id()` de `app/services/platforms/tiktok.ts`).
-pub const TIKTOK_APPLICATION_ID: &str = "GL6399433079641606942";
-
-/// Solicitar el acceso a LIVE con Streamlabs (`applicationUrl` en Desktop).
-pub const ACCESS_APPLY_URL: &str =
-    "https://www.tiktok.com/falcon/live_g/live_access_pc_apply/intro/index.html?id=GL6399433079641606942&lang=es";
-
-/// Consultar el resultado de la solicitud (`confirmationUrl` en Desktop; es
-/// también el enlace del proyecto de referencia).
-pub const ACCESS_STATUS_URL: &str =
-    "https://www.tiktok.com/falcon/live_g/live_access_pc_apply/result/index.html?id=GL6399433079641606942&lang=es";

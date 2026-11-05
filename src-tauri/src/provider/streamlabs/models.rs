@@ -155,6 +155,19 @@ pub fn summary(a: &AccessCheck) -> String {
     )
 }
 
+/// Valores de `application_status.status` que indican una solicitud en
+/// revisión. Streamlabs Desktop solo documenta `approved`, `rejected` y
+/// `never_applied` (y durante una revisión real se observó `never_applied`);
+/// estos valores se reconocen por si el proveedor llega a informarlos.
+pub const PENDING_APPLICATION_STATUS: &[&str] = &[
+    "pending",
+    "in_review",
+    "under_review",
+    "reviewing",
+    "submitted",
+    "processing",
+];
+
 /// Ámbito según `reason` y `application_status` (réplica de `convertScope`
 /// de Streamlabs Desktop, sin convertir valores desconocidos en «denegada»).
 pub fn scope_of(
@@ -167,6 +180,17 @@ pub fn scope_of(
     let reason_v = reason_f.value().copied();
     if app_status == Some("never_applied") && reason_v != Some(reason::APPROVED_OBS) {
         return LiveScope::NeverApplied;
+    }
+    let pending = app_status
+        .map(|s| PENDING_APPLICATION_STATUS.contains(&s.to_ascii_lowercase().as_str()))
+        .unwrap_or(false);
+    if pending
+        && !matches!(
+            reason_v,
+            Some(reason::APPROVED) | Some(reason::APPROVED_OBS)
+        )
+    {
+        return LiveScope::Pending;
     }
     match reason_f {
         Field::Present { value } => match *value {
@@ -210,6 +234,14 @@ pub fn availability_of(scope: LiveScope, can: &Field<bool>, reason_f: &Field<i64
                     LiveScope::Rejected => UnavailableCause::Rejected,
                     _ => UnavailableCause::NotApproved,
                 },
+            },
+        },
+        LiveScope::Pending => match can_v {
+            Some(true) => Availability::Contradictory {
+                detail: "la solicitud figura en revisión pero can_be_live=true".into(),
+            },
+            _ => Availability::NotAvailable {
+                cause: UnavailableCause::Pending,
             },
         },
         LiveScope::Legacy => Availability::NotAvailable {
@@ -482,6 +514,40 @@ mod tests {
             field_application_status(Some(&json!({"status": 1}))),
             Field::Invalid { .. }
         ));
+    }
+
+    #[test]
+    fn pending_application_is_distinguished() {
+        for status in ["pending", "IN_REVIEW", "under_review"] {
+            let a = access(json!({"reason": 0, "can_be_live": false, "user": {},
+                                  "application_status": {"status": status}}));
+            assert_eq!(a.scope, LiveScope::Pending, "{status}");
+            assert_eq!(
+                a.availability,
+                Availability::NotAvailable {
+                    cause: UnavailableCause::Pending
+                }
+            );
+        }
+        let a = access(
+            json!({"reason": 0, "can_be_live": true, "user": {}, "application_status": {"status": "pending"}}),
+        );
+        assert!(matches!(a.availability, Availability::Contradictory { .. }));
+        // Aprobada prevalece sobre un estado de solicitud antiguo.
+        let a = access(
+            json!({"reason": 1, "can_be_live": true, "user": {}, "application_status": {"status": "pending"}}),
+        );
+        assert_eq!(a.availability, Availability::Confirmed);
+        // El estado observado durante una revisión real sigue siendo never_applied.
+        let a = access(
+            json!({"reason": 0, "can_be_live": false, "user": {}, "application_status": {"status": "never_applied"}}),
+        );
+        assert_eq!(
+            a.availability,
+            Availability::NotAvailable {
+                cause: UnavailableCause::NeverApplied
+            }
+        );
     }
 
     #[test]

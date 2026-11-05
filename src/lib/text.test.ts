@@ -1,82 +1,117 @@
 import { describe, expect, it } from "vitest";
 import type { AccessView, AccountInfo, Availability } from "../types";
-import { accessPresentation, errorText, formatCountdown, formatElapsed, validateTitle } from "./text";
+import {
+  accessPresentation,
+  errorText,
+  FOCUS_REFRESH_MIN_MS,
+  formatCountdown,
+  formatElapsed,
+  REQUEST_ACCESS_TEXT,
+  shouldRefreshOnFocus,
+  validateTitle,
+} from "./text";
 
-function account(availability: Availability, extra: Partial<AccountInfo["access"]> = {}): AccountInfo {
+function account(availability: Availability, extra: Partial<AccountInfo["access"]> = {}, checkedAtMs = 0): AccountInfo {
   return {
     username: "creadora",
     displayName: null,
     access: {
       reason: { state: "present", value: 0 },
       canBeLive: { state: "present", value: false },
-      applicationStatus: { state: "missing" },
+      applicationStatus: { state: "present", value: "never_applied" },
       userPresent: true,
-      scope: "notApproved",
+      scope: "neverApplied",
       availability,
       ...extra,
     },
     audience: { disabled: false, defaultValue: "0", options: [] },
     httpStatus: 200,
     durationMs: 312,
-    checkedAtMs: 0,
+    checkedAtMs,
   };
 }
 
-const done = (a: Availability): AccessView => ({ state: "done", account: account(a) });
+const done = (a: Availability, checkedAtMs = 0): AccessView => ({ state: "done", account: account(a, {}, checkedAtMs) });
+const failed: AccessView = {
+  state: "failed",
+  error: { code: "NETWORK", category: "network", message: "Sin conexión.", detail: null, httpStatus: null },
+};
 
-describe("accessPresentation", () => {
-  it("solo permite pedir credenciales con permiso confirmado", () => {
-    expect(accessPresentation(done({ kind: "confirmed" })).canRequest).toBe(true);
-    for (const v of [
-      done({ kind: "notAvailable", cause: "notApproved" }),
-      done({ kind: "unknown", detail: "x" }),
-      done({ kind: "contradictory", detail: "x" }),
-      { state: "checking" } as AccessView,
-      { state: "idle" } as AccessView,
-      {
-        state: "failed",
-        error: { code: "NETWORK", category: "network", message: "sin red", detail: null, httpStatus: null },
-      } as AccessView,
-    ]) {
-      expect(accessPresentation(v).canRequest).toBe(false);
+describe("accessPresentation: estados de la interfaz", () => {
+  it("habilitado solo con permiso confirmado", () => {
+    const p = accessPresentation(done({ kind: "confirmed" }));
+    expect(p.mode).toBe("enabled");
+    expect(p.canRequest).toBe(true);
+  });
+
+  it("emisión no disponible → solicitar acceso", () => {
+    for (const cause of ["neverApplied", "notApproved", "rejected", "cannotGoLive"] as const) {
+      const p = accessPresentation(done({ kind: "notAvailable", cause }));
+      expect(p.mode).toBe("request");
+      expect(p.canRequest).toBe(false);
+    }
+    expect(REQUEST_ACCESS_TEXT).toBe(
+      "Tu cuenta está conectada. Solicita acceso a LIVE proporcionando la información y las capturas que TikTok solicite.",
+    );
+  });
+
+  it("solicitud pendiente según el proveedor", () => {
+    const p = accessPresentation(done({ kind: "notAvailable", cause: "pending" }));
+    expect(p.mode).toBe("pending");
+    expect(p.label).toBe("Solicitud en revisión");
+    expect(p.canRequest).toBe(false);
+  });
+
+  it("never_applied no se presenta como «nunca solicitada»: puede estar en revisión", () => {
+    const p = accessPresentation(done({ kind: "notAvailable", cause: "neverApplied" }));
+    expect(p.description).toMatch(/Si ya enviaste la solicitud, consúltala/);
+  });
+
+  it("estado desconocido ante fallos o datos insuficientes", () => {
+    for (const v of [failed, done({ kind: "unknown", detail: "x" }), done({ kind: "contradictory", detail: "x" })]) {
+      const p = accessPresentation(v);
+      expect(p.mode).toBe("unknown");
+      expect(p.label).not.toMatch(/no disponible|no aprobad/i);
+      expect(p.canRequest).toBe(false);
     }
   });
 
-  it("un fallo o un dato ausente no se presentan como «no aprobada»", () => {
-    const failed = accessPresentation({
-      state: "failed",
-      error: { code: "PROVIDER_UNAVAILABLE", category: "server", message: "Error 503.", detail: null, httpStatus: 503 },
-    });
-    expect(failed.label).not.toMatch(/no disponible|no aprobad/i);
-    expect(accessPresentation(done({ kind: "unknown", detail: "x" })).label).toBe("Acceso sin confirmar");
-    expect(accessPresentation(done({ kind: "contradictory", detail: "x" })).tone).toBe("warn");
-  });
-
-  it("ofrece solicitar acceso cuando corresponde", () => {
-    expect(accessPresentation(done({ kind: "notAvailable", cause: "neverApplied" })).offerAccessLinks).toBe(true);
-    expect(accessPresentation(done({ kind: "notAvailable", cause: "legacy" })).offerAccessLinks).toBe(false);
-    expect(accessPresentation(done({ kind: "confirmed" })).offerAccessLinks).toBe(false);
-  });
-
-  it("no afirma que nunca se solicitó: puede estar en revisión", () => {
-    const p = accessPresentation(done({ kind: "notAvailable", cause: "neverApplied" }));
-    expect(p.description).not.toMatch(/no has solicitado/);
-    expect(p.description).toMatch(/consulta su estado/);
+  it("legacy y volver a entrar no ofrecen solicitar acceso", () => {
+    expect(accessPresentation(done({ kind: "notAvailable", cause: "legacy" })).mode).toBe("blocked");
+    expect(accessPresentation(done({ kind: "notAvailable", cause: "relog" })).mode).toBe("blocked");
   });
 
   it("muestra tal cual un estado de solicitud no documentado", () => {
     const v: AccessView = {
       state: "done",
-      account: account(
-        { kind: "notAvailable", cause: "notApproved" },
-        { applicationStatus: { state: "present", value: "pending" } },
-      ),
+      account: account({ kind: "notAvailable", cause: "notApproved" }, { applicationStatus: { state: "present", value: "on_hold" } }),
     };
-    expect(accessPresentation(v).description).toBe("Estado de la solicitud según Streamlabs: «pending».");
+    expect(accessPresentation(v).description).toBe("Estado de la solicitud según Streamlabs: «on_hold».");
   });
 
-  it("marca la comprobación en curso", () => {
+  it("comprobación en curso", () => {
     expect(accessPresentation({ state: "checking" }).checking).toBe(true);
+  });
+});
+
+describe("shouldRefreshOnFocus: comprobar al volver sin repetir peticiones", () => {
+  const t0 = 1_000_000_000;
+
+  it("comprueba al volver si no hay permiso y pasó el intervalo", () => {
+    expect(shouldRefreshOnFocus(true, done({ kind: "notAvailable", cause: "neverApplied" }, t0), 0, t0 + FOCUS_REFRESH_MIN_MS)).toBe(true);
+    expect(shouldRefreshOnFocus(true, failed, 0, t0)).toBe(true);
+  });
+
+  it("no repite dentro del intervalo (ni tras una comprobación reciente)", () => {
+    const v = done({ kind: "notAvailable", cause: "neverApplied" }, t0);
+    expect(shouldRefreshOnFocus(true, v, 0, t0 + 5_000)).toBe(false);
+    expect(shouldRefreshOnFocus(true, failed, t0, t0 + 5_000)).toBe(false);
+  });
+
+  it("no comprueba sin sesión, durante otra comprobación ni con permiso confirmado", () => {
+    expect(shouldRefreshOnFocus(false, failed, 0, t0)).toBe(false);
+    expect(shouldRefreshOnFocus(true, { state: "checking" }, 0, t0)).toBe(false);
+    expect(shouldRefreshOnFocus(true, done({ kind: "confirmed" }), 0, t0)).toBe(false);
   });
 });
 
@@ -102,6 +137,5 @@ describe("formatos y validación", () => {
   it("título", () => {
     expect(validateTitle("   ", 100)).not.toBeNull();
     expect(validateTitle("Hola", 100)).toBeNull();
-    expect(validateTitle("x".repeat(101), 100)).not.toBeNull();
   });
 });

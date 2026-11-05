@@ -8,9 +8,7 @@ use crate::auth::{LoopbackServer, Pkce};
 use crate::error::{AppError, AppResult, ErrorInfo};
 use crate::event_log::{now_ms, EventLog};
 use crate::prefs::{ActiveStreamRecord, Preferences, PreferencesStore};
-use crate::provider::streamlabs::endpoints::{
-    device_platform, ACCESS_APPLY_URL, ACCESS_STATUS_URL, TITLE_MAX_CHARS,
-};
+use crate::provider::streamlabs::endpoints::{device_platform, TITLE_MAX_CHARS};
 use crate::provider::streamlabs::models::summary;
 use crate::provider::{
     AccountInfo, Availability, Category, LiveProvider, StartLiveRequest, UnavailableCause,
@@ -213,6 +211,7 @@ pub fn cause_text(c: UnavailableCause) -> &'static str {
         UnavailableCause::Legacy => "la cuenta tiene acceso «legacy»: Streamlabs no genera la clave; se obtiene en TikTok LIVE Producer.",
         UnavailableCause::Relog => "Streamlabs pide volver a iniciar sesión para actualizar los permisos.",
         UnavailableCause::CannotGoLive => "Streamlabs indica can_be_live=false: la cuenta no puede emitir ahora.",
+        UnavailableCause::Pending => "Streamlabs indica que la solicitud de acceso está en revisión.",
     }
 }
 
@@ -706,22 +705,26 @@ impl AppCore {
         }
     }
 
-    /// Abre la página oficial de TikTok para solicitar o consultar el acceso.
+    /// Abre la página oficial de TikTok del proveedor activo para solicitar o
+    /// consultar el acceso. Abrir el formulario no envía ni aprueba nada: el
+    /// estado solo cambia con la respuesta del proveedor.
     pub async fn open_access_page(&self, page: AccessPage) -> AppResult<()> {
+        let pages = self.provider.access_pages();
         let url = match page {
-            AccessPage::Apply => ACCESS_APPLY_URL,
-            AccessPage::Status => ACCESS_STATUS_URL,
+            AccessPage::Apply => pages.apply_url,
+            AccessPage::Status => pages.status_url,
         };
         let opener = self.opener.clone();
         if blocking(move || opener.open(url)).await? {
-            self.log.info(match page {
-                AccessPage::Apply => {
-                    "Abierta la página de TikTok para solicitar el acceso a LIVE con Streamlabs."
-                }
-                AccessPage::Status => {
-                    "Abierta la página de TikTok para consultar la solicitud de acceso."
-                }
-            });
+            self.log.info(format!(
+                "Abierta la página de TikTok para {} el acceso a LIVE con {} (id {}).",
+                match page {
+                    AccessPage::Apply => "solicitar",
+                    AccessPage::Status => "consultar",
+                },
+                pages.provider,
+                pages.application_id
+            ));
             Ok(())
         } else {
             Err(AppError::Validation(format!(
