@@ -9,12 +9,12 @@
 //! cargo test --test system_keyring -- --ignored --nocapture
 //! ```
 
-use tiktok_obs_connector_lib::security::{KeyringStore, Secret, TokenStore};
+use virelo_lib::security::{KeyringStore, Secret, TokenStore};
 
 #[test]
 #[ignore]
 fn keyring_roundtrip_or_descriptive_error() {
-    let store = KeyringStore;
+    let store = KeyringStore::default();
     match store.load() {
         Ok(previous) => {
             // Hay almacén: si existe una sesión real guardada, no se toca.
@@ -22,7 +22,7 @@ fn keyring_roundtrip_or_descriptive_error() {
                 println!("Almacén disponible y con una sesión guardada: no se modifica.");
                 return;
             }
-            let value = Secret::new("valor-de-prueba-tiktok-obs-connector");
+            let value = Secret::new("valor-de-prueba-virelo");
             store.save(&value).expect("guardar");
             assert_eq!(store.load().unwrap().unwrap().expose(), value.expose());
             store.delete().expect("borrar");

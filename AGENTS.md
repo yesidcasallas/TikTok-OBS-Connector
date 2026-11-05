@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guía para agentes de IA (y personas) que trabajan en **TikTok OBS Connector**: app de escritorio para **Windows** que inicia sesión con TikTok mediante Streamlabs (OAuth + PKCE en el navegador del sistema), crea la sesión LIVE y entrega el servidor RTMP y la clave para OBS. También finaliza el LIVE.
+Guía para agentes de IA (y personas) que trabajan en **Virelo** (antes «TikTok OBS Connector»): app de escritorio para **Windows, Linux y macOS** que inicia sesión con TikTok mediante Streamlabs (OAuth + PKCE en el navegador del sistema), crea la sesión LIVE y entrega el servidor RTMP y la clave para OBS. También finaliza el LIVE.
 
 - **Backend:** Rust + Tauri 2 (`src-tauri/`), `reqwest` con rustls/`ring` y Tokio.
 - **Frontend:** React 19 + TypeScript + Vite (`src/`), CSS propio sin frameworks.
@@ -44,7 +44,10 @@ src-tauri/src/
   provider/mod.rs        Trait LiveProvider, independiente del proveedor.
   provider/streamlabs/   endpoints.rs (URLs y parámetros) · client.rs · models.rs · errors.rs
   security/              Secret, redacción de registros, almacén de credenciales (keyring).
-  prefs.rs               Preferencias no sensibles (%APPDATA%\com.tiktokobsconnector.desktop).
+  prefs.rs               Preferencias no sensibles (%APPDATA%\com.virelo.desktop), con migración desde los identificadores antiguos.
+  provider/tiktok_login_kit.rs  Integración propia con TikTok Login Kit: preparada y NO activa (sin credenciales de Virelo).
+docs/integracion-tiktok/  Matriz de requisitos de TikTok, OAuth, acceso LIVE, materiales de revisión y borradores legales.
+site/                    Borrador del sitio público (sin publicar).
 ```
 
 ## Reglas obligatorias
@@ -74,6 +77,13 @@ src-tauri/src/
 - Permisos mínimos en `src-tauri/capabilities/default.json` (solo `core:event:allow-listen/unlisten`). Sin plugins de shell, fs ni http en el frontend. Mantenga la CSP y `freezePrototype`.
 - El navegador solo se abre desde Rust (`opener.rs`, solo `https://`).
 - Las operaciones con el proveedor usan el candado `op.try_lock()` → `AppError::Busy`. Las llamadas bloqueantes (keyring, navegador) van en `spawn_blocking`.
+
+### Marca e integración con TikTok
+
+- El nombre visible es **Virelo**; no use «TikTok» en el nombre de la app (la revisión de TikTok lo rechaza). TikTok, OBS y Streamlabs solo se nombran cuando identifican el servicio real.
+- No cambie `identifier`, `KEYRING_SERVICE` ni las rutas de datos sin migración (ver `LEGACY_IDENTIFIERS` en `lib.rs` y `LEGACY_KEYRING_SERVICES`).
+- La autorización actual es de **Streamlabs**: no la presente como propia de Virelo. Login Kit no permite crear emisiones ni obtener claves RTMP.
+- Nunca incluya un `client_secret` en el ejecutable: el intercambio del código de Login Kit debe hacerlo un servidor de Virelo.
 
 ## Convenciones
 

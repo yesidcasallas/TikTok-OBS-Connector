@@ -202,6 +202,31 @@ mod tests {
     }
 
     #[test]
+    fn generic_error_is_never_worded_as_rejected_application() {
+        for (status, body) in [
+            (403u16, json!({ "message": GENERIC })),
+            (400, json!({ "message": GENERIC })),
+            (500, json!({ "message": GENERIC })),
+        ] {
+            let text = map_http_error(Op::Start, status, &body_bytes(body))
+                .to_string()
+                .to_lowercase();
+            assert!(
+                !text.contains("solicitud rechazada") && !text.contains("fue rechazada"),
+                "HTTP {status}: {text}"
+            );
+        }
+        let text = body_error(200, &json!({"success": false, "message": GENERIC}))
+            .unwrap()
+            .to_string();
+        assert!(!text.to_lowercase().contains("rechaz"), "{text}");
+    }
+
+    fn body_bytes(v: Value) -> Vec<u8> {
+        serde_json::to_vec(&v).unwrap()
+    }
+
+    #[test]
     fn explicit_codes_are_permission_denied() {
         let e = map_http_error(
             Op::Start,

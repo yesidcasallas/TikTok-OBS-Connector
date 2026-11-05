@@ -749,13 +749,16 @@ impl AppCore {
             AccessView::Failed { error } => format!("error {} ({})", error.code, error.message),
         };
         format!(
-            "TikTok OBS Connector {} · {} · device_platform={}\nSesión: {:?} · Acceso: {}\nRegistro: {}\n---\n{}",
+            "Virelo {} · {} · device_platform={}\nSesión: {:?} · Acceso: {}\nRegistro: {}\n---\n{}",
             s.app.version,
             s.app.os,
             s.app.device_platform,
             s.auth.status,
             access,
-            self.log.file_path().map(|p| p.display().to_string()).unwrap_or_else(|| "solo en memoria".into()),
+            self.log
+                .file_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "solo en memoria".into()),
             self.log.recent_text(80)
         )
     }

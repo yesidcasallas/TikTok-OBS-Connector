@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TikTok OBS Connector",
-  "mainBinaryName": "TikTok-OBS-Connector",
-  "version": "0.1.0-beta.1",
-  "identifier": "com.tiktokobsconnector.desktop",
+  "productName": "Virelo",
+  "mainBinaryName": "Virelo",
+  "version": "0.1.0-beta.2",
+  "identifier": "com.virelo.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1430",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "TikTok OBS Connector",
+        "title": "Virelo",
         "width": 720,
         "height": 780,
         "minWidth": 400,
@@ -37,12 +37,12 @@
       "app",
       "dmg"
     ],
-    "publisher": "TikTok OBS Connector",
-    "copyright": "© 2026 TikTok OBS Connector. GPL-3.0-or-later. No afiliado a TikTok ni a Streamlabs.",
+    "publisher": "Virelo",
+    "copyright": "© 2026 Virelo. GPL-3.0-or-later. No afiliado a TikTok, OBS Project ni Streamlabs.",
     "category": "Video",
     "license": "GPL-3.0-or-later",
     "shortDescription": "Servidor y clave de TikTok LIVE para OBS mediante Streamlabs",
-    "longDescription": "Inicia sesión con TikTok a través de Streamlabs en el navegador y obtiene el servidor RTMP y la clave de transmisión de TikTok LIVE para usarlos en OBS. Usa endpoints internos de Streamlabs Desktop que pueden cambiar sin aviso.",
+    "longDescription": "Virelo inicia sesión con TikTok a través de la integración de Streamlabs y, si la cuenta tiene acceso a LIVE desde PC, obtiene el servidor RTMP y la clave de transmisión para usarlos en OBS. Usa endpoints internos de Streamlabs Desktop que pueden cambiar sin aviso.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

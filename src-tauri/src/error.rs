@@ -49,7 +49,7 @@ pub enum AppError {
     PermissionDenied { message: Option<String> },
 
     /// HTTP 403 con JSON pero sin código explícito: no se sabe la causa.
-    #[error("Streamlabs no autorizó la solicitud (HTTP {status}). No indica el motivo: puede deberse a que la cuenta no tiene acceso a LIVE desde PC, a una suspensión o a una restricción temporal.")]
+    #[error("Streamlabs no autorizó la petición (HTTP {status}). No indica el motivo: puede deberse a que la cuenta no tiene acceso a LIVE desde PC, a una suspensión o a una restricción temporal. No significa que tu solicitud de acceso haya sido rechazada.")]
     ProviderForbidden {
         status: u16,
         message: Option<String>,
@@ -69,7 +69,7 @@ pub enum AppError {
     #[error("Streamlabs bloqueó la solicitud (HTTP {status}). {detail}")]
     ProviderBlocked { status: u16, detail: String },
 
-    #[error("Streamlabs rechazó la solicitud (HTTP {status}).")]
+    #[error("Streamlabs no aceptó la petición (HTTP {status}). Revisa el detalle del proveedor.")]
     ProviderRejected {
         status: u16,
         message: Option<String>,

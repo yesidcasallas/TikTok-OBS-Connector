@@ -1,14 +1,14 @@
 [package]
-name = "tiktok-obs-connector"
-version = "0.1.0-beta.1"
-description = "Obtén el servidor y la clave de TikTok LIVE para OBS iniciando sesión mediante Streamlabs"
-authors = ["TikTok OBS Connector"]
+name = "virelo"
+version = "0.1.0-beta.2"
+description = "Virelo: servidor y clave de TikTok LIVE para OBS mediante la integración de Streamlabs"
+authors = ["Virelo"]
 license = "GPL-3.0-or-later"
 edition = "2021"
 rust-version = "1.85"
 
 [lib]
-name = "tiktok_obs_connector_lib"
+name = "virelo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -105,7 +105,7 @@ export function AccountCard() {
     return (
       <Card title="Cuenta">
         <p className="muted">
-          Se abrirá el navegador con Streamlabs. Escribe tus credenciales de TikTok solo en esa página.
+          Se abrirá el navegador con Streamlabs: la autorización ante TikTok la concede Streamlabs, no Virelo. Escribe tus credenciales de TikTok solo en esa página.
         </p>
         {auth.sessionError && <Callout tone="bad">{errorText(auth.sessionError)}</Callout>}
         <div className="row">

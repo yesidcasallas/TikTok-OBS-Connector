@@ -1,12 +1,12 @@
-# TikTok OBS Connector
+# Virelo
 
 **Obtén el servidor RTMP y la clave de transmisión de TikTok LIVE para OBS iniciando sesión con tu cuenta de TikTok, sin copiar nada a mano desde LIVE Center.**
 
-TikTok OBS Connector es una aplicación de escritorio para **Windows, Linux y macOS**. Inicia sesión con TikTok **a través de Streamlabs** en tu navegador, crea la sesión LIVE con el título y la categoría que elijas y te entrega el **servidor** y la **clave** listos para pegar en OBS. Al terminar, finaliza el LIVE desde la propia aplicación.
+Virelo (antes «TikTok OBS Connector») es una aplicación de escritorio para **Windows, Linux y macOS**. Inicia sesión con TikTok **a través de la integración de Streamlabs** en tu navegador, crea la sesión LIVE con el título y la categoría que elijas y te entrega el **servidor** y la **clave** listos para pegar en OBS. Al terminar, finaliza el LIVE desde la propia aplicación.
 
 Hecha con **Rust + Tauri 2** y **React + TypeScript**. Interfaz mínima, en español, con un instalador de unos pocos MB.
 
-> ⚠️ **Aviso.** Usa **endpoints internos y no documentados de Streamlabs Desktop**. Pueden cambiar o dejar de funcionar sin aviso, y su uso por terceros puede no estar permitido por las condiciones de Streamlabs. No está afiliada a TikTok ni a Streamlabs. **Iniciar sesión no garantiza poder emitir:** TikTok decide qué cuentas tienen acceso a LIVE.
+> ⚠️ **Aviso.** Virelo **no tiene una integración propia aprobada por TikTok**: la autorización la concede **Streamlabs**, y la pantalla de autorización muestra a Streamlabs como propietario. Usa **endpoints internos y no documentados de Streamlabs Desktop**, que pueden cambiar o dejar de funcionar sin aviso, y su uso por terceros puede no estar permitido por las condiciones de Streamlabs. Virelo no está afiliado a TikTok, OBS Project ni Streamlabs. **Iniciar sesión no garantiza poder emitir:** TikTok decide qué cuentas tienen acceso a LIVE. El estado de la preparación de una integración propia está en [`docs/integracion-tiktok/`](docs/integracion-tiktok/README.md).
 
 ## Funciones
 
@@ -18,7 +18,7 @@ Hecha con **Rust + Tauri 2** y **React + TypeScript**. Interfaz mínima, en espa
 - **Obtener servidor y clave**: solo se habilita con permiso confirmado, y Rust aplica la misma regla. ⚠️ Esto crea una sesión LIVE en tu cuenta.
 - Copiar el servidor y la clave. La clave está oculta por defecto.
 - **Finalizar LIVE** desde la aplicación.
-- Cerrar sesión. Opcionalmente, recordar la sesión en el Administrador de credenciales de Windows.
+- Cerrar sesión. Opcionalmente, recordar la sesión en el almacén de credenciales del sistema (Administrador de credenciales de Windows, Keychain o Secret Service).
 - **Copiar diagnóstico**, sin tokens ni claves, para informar de problemas.
 
 ## Instalación
@@ -28,7 +28,7 @@ Descarga el archivo de tu sistema desde [**GitHub Releases**](../../releases) y 
 | Sistema | Archivo | Notas |
 |---|---|---|
 | Windows 10/11 x64 | `…_windows_x64-setup.exe` | Instalador para el usuario actual; instala WebView2 si falta. Sin firmar: SmartScreen → «Ejecutar de todas formas». |
-| Linux x86_64 | `…_linux_amd64.AppImage` / `…_linux_amd64.deb` | glibc 2.35 o superior (Ubuntu 22.04+). El paquete `.deb` se llama `tik-tok-obs-connector`. |
+| Linux x86_64 | `…_linux_amd64.AppImage` / `…_linux_amd64.deb` | glibc 2.35 o superior (Ubuntu 22.04+). El paquete `.deb` se llama `virelo`. |
 | macOS ARM64 / x86_64 | `…_darwin_aarch64.dmg` / `…_darwin_x64.dmg` | Sin notarizar: Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente». Compilado en CI, aún sin probar en un Mac. |
 
 **Requisitos:** OBS Studio y una cuenta de TikTok con acceso a LIVE mediante Streamlabs, que puedes solicitar desde la app.
@@ -69,7 +69,7 @@ La app lee `reason`, `can_be_live` y `application_status.status` de `/tiktok/inf
 
 Streamlabs Desktop solo pide credenciales con la cuenta aprobada, y esta app hace lo mismo. Cuando el proveedor devuelve un error genérico (por ejemplo, `Unable to go live. Please try again later`), la app muestra su mensaje original y el código HTTP **sin afirmar una causa**. Solo dice «sin permiso» si Streamlabs envía un código explícito (`user_has_no_live_auth`, `scope_not_authorized`, `scope_permission_missed`).
 
-**Diagnóstico:** `%LOCALAPPDATA%\com.tiktokobsconnector.desktop\logs\diagnostico.log` registra la operación, el código HTTP, el tipo de contenido, la duración, los campos de estado y los errores saneados. Nunca registra tokens, claves, cookies, cuerpos completos ni URLs con credenciales.
+**Diagnóstico:** `%LOCALAPPDATA%\com.virelo.desktop\logs\diagnostico.log` registra la operación, el código HTTP, el tipo de contenido, la duración, los campos de estado y los errores saneados. Nunca registra tokens, claves, cookies, cuerpos completos ni URLs con credenciales.
 
 La aplicación se identifica con su propio User-Agent y con la plataforma real (`device_platform=win32`, el mismo valor que envía Streamlabs Desktop en Windows).
 
@@ -77,7 +77,7 @@ La aplicación se identifica con su propio User-Agent y con la plataforma real (
 
 - El **token** de Streamlabs y la **clave** viven solo en Rust, en un tipo `Secret`: no se serializan, se muestran como `••••` y su memoria se borra al liberarse. El token **nunca** llega a la interfaz.
 - «Copiar» escribe en el portapapeles desde Rust. La clave completa solo se envía a la pantalla al pulsar «Mostrar».
-- **Sesión:** solo en memoria, salvo que marques «Recordar». En ese caso se guarda en el **Administrador de credenciales de Windows**, nunca en archivos.
+- **Sesión:** solo en memoria, salvo que marques «Recordar». En ese caso el token de sesión de Streamlabs se guarda en el **almacén de credenciales del sistema** (servicio `Virelo`), nunca en archivos.
 - **Servidor de retorno del login:**
   - Escucha solo en `127.0.0.1`, en un puerto aleatorio.
   - Valida la cabecera `Host` y el método.
@@ -105,7 +105,7 @@ cd src-tauri && cargo test --test streamlabs_contract -- --ignored   # contrato 
 # En Windows
 npm ci
 npx tauri build
-bash scripts/package-dist.sh            # → dist/installer/TikTok-OBS-Connector-Setup.exe
+bash scripts/package-dist.sh            # → dist/installer/Virelo-Setup.exe
 
 # Compilación cruzada desde WSL/Linux (cargo-xwin, clang, lld, llvm-rc, nsis y target x86_64-pc-windows-msvc)
 npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
@@ -151,6 +151,14 @@ src-tauri/src/
   security/                   Secret, redacción y almacén de credenciales
   commands.rs                 Comandos Tauri
 ```
+
+## Cambio de nombre y migración
+
+Hasta la `v0.1.0-beta.1` la aplicación se llamaba «TikTok OBS Connector». La guía de revisión de TikTok no admite nombres que hagan referencia a redes sociales, así que pasó a llamarse **Virelo**, con identificador `com.virelo.desktop`. Al abrir Virelo por primera vez:
+
+- Las preferencias se copian desde `com.tiktokobsconnector.desktop` o `com.tiktokobsconnector.app`, si existen.
+- La sesión guardada se mueve del servicio `TikTokOBSConnector` al servicio `Virelo` del almacén de credenciales. No hay que volver a iniciar sesión.
+- La instalación anterior de «TikTok OBS Connector» no se elimina sola: desinstálala desde el sistema.
 
 ## Licencia
 

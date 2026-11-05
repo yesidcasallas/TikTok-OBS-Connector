@@ -5,10 +5,10 @@
   --border: #2a2f3d;
   --text: #e6e8ee;
   --muted: #9aa1b2;
-  --accent: #25f4ee;
-  --accent-text: #06201f;
-  --primary: #fe2c55;
-  --primary-hover: #ff4a6e;
+  --accent: #fbbf24;
+  --accent-text: #1c1407;
+  --primary: #7c3aed;
+  --primary-hover: #8b5cf6;
   --ok: #22c55e;
   --warn: #f59e0b;
   --bad: #f87171;
@@ -27,9 +27,9 @@
     --border: #d9dde5;
     --text: #151821;
     --muted: #5b6273;
-    --accent-text: #06201f;
-    --primary: #e11d48;
-    --primary-hover: #be123c;
+    --accent-text: #1c1407;
+    --primary: #6d28d9;
+    --primary-hover: #5b21b6;
     --ok: #15803d;
     --warn: #b45309;
     --bad: #b91c1c;
@@ -219,7 +219,7 @@ summary:focus-visible {
 
 @media (prefers-color-scheme: light) {
   .link {
-    color: #0e7490;
+    color: #6d28d9;
   }
 }
 

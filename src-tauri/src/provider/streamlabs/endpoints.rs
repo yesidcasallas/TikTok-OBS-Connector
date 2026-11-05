@@ -64,7 +64,7 @@ pub fn device_platform() -> &'static str {
 /// `User-Agent` honesto que identifica a esta aplicación.
 pub fn user_agent() -> String {
     format!(
-        "TikTokOBSConnector/{} ({}; {})",
+        "Virelo/{} ({}; {})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH

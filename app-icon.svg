@@ -1,20 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Icono de Virelo: «V» con señal de emisión. Paleta propia (violeta y ámbar). -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#151a24"/>
-      <stop offset="1" stop-color="#0b0d12"/>
+      <stop offset="0" stop-color="#2a1b5e"/>
+      <stop offset="1" stop-color="#120c2b"/>
     </linearGradient>
-    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#25f4ee"/>
-      <stop offset="1" stop-color="#1fb5b0"/>
-    </linearGradient>
-    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#fe2c55"/>
-      <stop offset="1" stop-color="#c81e43"/>
+    <linearGradient id="v" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c4b5fd"/>
+      <stop offset="1" stop-color="#7c3aed"/>
     </linearGradient>
   </defs>
   <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bg)"/>
-  <circle cx="400" cy="512" r="210" fill="none" stroke="url(#a)" stroke-width="64"/>
-  <circle cx="624" cy="512" r="210" fill="none" stroke="url(#b)" stroke-width="64"/>
-  <circle cx="512" cy="512" r="74" fill="#ffffff"/>
+  <path d="M262 300 L512 780 L762 300" fill="none" stroke="url(#v)" stroke-width="112"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="512" cy="300" r="56" fill="#fbbf24"/>
+  <path d="M412 230 A140 140 0 0 1 612 230" fill="none" stroke="#fbbf24" stroke-width="36"
+        stroke-linecap="round" opacity="0.9"/>
+  <path d="M352 170 A228 228 0 0 1 672 170" fill="none" stroke="#fbbf24" stroke-width="36"
+        stroke-linecap="round" opacity="0.55"/>
 </svg>

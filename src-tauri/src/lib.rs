@@ -1,5 +1,8 @@
-//! TikTok OBS Connector: inicia sesión con TikTok mediante Streamlabs y obtiene
-//! el servidor RTMP y la clave de transmisión para OBS.
+//! Virelo: inicia sesión con TikTok mediante la integración de Streamlabs y
+//! obtiene el servidor RTMP y la clave de transmisión para OBS.
+//!
+//! Virelo no tiene (todavía) una integración propia aprobada por TikTok: la
+//! autorización la concede Streamlabs. Ver `docs/integracion-tiktok/`.
 
 pub mod app_core;
 pub mod auth;
@@ -21,6 +24,13 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const EVENT_STATE: &str = "app-state";
+/// Nombre visible de la aplicación.
+pub const APP_NAME: &str = "Virelo";
+/// Identificadores de versiones anteriores (carpetas de datos a migrar).
+pub const LEGACY_IDENTIFIERS: &[&str] = &[
+    "com.tiktokobsconnector.desktop",
+    "com.tiktokobsconnector.app",
+];
 /// Tiempo máximo para completar el login en el navegador.
 pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -43,18 +53,30 @@ pub fn run() {
                 log.set_file(dir.join("diagnostico.log"));
             }
             log.info(format!(
-                "TikTok OBS Connector {} iniciado ({} {}).",
+                "{APP_NAME} {} iniciado ({} {}).",
                 env!("CARGO_PKG_VERSION"),
                 std::env::consts::OS,
                 std::env::consts::ARCH
             ));
             let provider =
                 Arc::new(StreamlabsProvider::production()?.with_diagnostics(log.clone()));
+            // Migración desde versiones con otro identificador (mismo usuario).
+            let config_dir = app.path().app_config_dir().ok();
+            let prefs = PreferencesStore::new(config_dir.clone());
+            if let Some(parent) = config_dir.as_deref().and_then(|d| d.parent()) {
+                let legacy: Vec<_> = LEGACY_IDENTIFIERS
+                    .iter()
+                    .map(|id| parent.join(id))
+                    .collect();
+                if let Some(from) = prefs.migrate_from(&legacy) {
+                    log.info(format!("Preferencias migradas desde {}.", from.display()));
+                }
+            }
             let core = Arc::new(AppCore::new(
                 provider,
-                Arc::new(KeyringStore),
+                Arc::new(KeyringStore::default()),
                 Arc::new(opener::SystemOpener),
-                PreferencesStore::new(app.path().app_config_dir().ok()),
+                prefs,
                 log,
                 LOGIN_TIMEOUT,
             ));
@@ -79,5 +101,5 @@ pub fn run() {
             commands::copy_value,
         ])
         .run(tauri::generate_context!())
-        .expect("error al iniciar TikTok OBS Connector");
+        .expect("error al iniciar Virelo");
 }

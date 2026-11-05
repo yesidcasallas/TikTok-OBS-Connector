@@ -357,13 +357,13 @@ fn page(title: &str, message: &str, ok: bool) -> String {
 }
 
 fn page_simple(message: &str) -> String {
-    page("TikTok OBS Connector", message, false)
+    page("Virelo", message, false)
 }
 
 fn page_success() -> String {
     page(
         "Autorización recibida",
-        "Ya puedes cerrar esta pestaña y volver a TikTok OBS Connector para ver el estado de tu cuenta.",
+        "Ya puedes cerrar esta pestaña y volver a Virelo para ver el estado de tu cuenta.",
         true,
     )
 }

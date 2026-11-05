@@ -10,11 +10,11 @@
 //! cargo test --test streamlabs_contract -- --ignored
 //! ```
 
-use tiktok_obs_connector_lib::error::AppError;
-use tiktok_obs_connector_lib::provider::streamlabs::client::ensure_crypto_provider;
-use tiktok_obs_connector_lib::provider::streamlabs::StreamlabsProvider;
-use tiktok_obs_connector_lib::provider::{Category, LiveProvider, StartLiveRequest};
-use tiktok_obs_connector_lib::security::Secret;
+use virelo_lib::error::AppError;
+use virelo_lib::provider::streamlabs::client::ensure_crypto_provider;
+use virelo_lib::provider::streamlabs::StreamlabsProvider;
+use virelo_lib::provider::{Category, LiveProvider, StartLiveRequest};
+use virelo_lib::security::Secret;
 
 fn provider() -> StreamlabsProvider {
     StreamlabsProvider::production().unwrap()

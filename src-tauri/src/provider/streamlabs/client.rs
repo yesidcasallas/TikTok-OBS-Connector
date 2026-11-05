@@ -837,7 +837,7 @@ mod tests {
                     .get("user-agent")
                     .and_then(|h| h.to_str().ok())
                     .unwrap_or("");
-                if ua.starts_with("TikTokOBSConnector/") && !ua.contains("Windows") {
+                if ua.starts_with("Virelo/") && !ua.contains("Windows") {
                     ResponseTemplate::new(200)
                         .set_body_json(json!({"reason": 1, "user": {"username": "u"}}))
                 } else {

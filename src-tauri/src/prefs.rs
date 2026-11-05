@@ -45,6 +45,32 @@ impl PreferencesStore {
             .unwrap_or_default()
     }
 
+    /// Copia `preferences.json` desde la carpeta de una versión anterior si la
+    /// actual aún no lo tiene. Devuelve la carpeta de origen si migró.
+    ///
+    /// Las carpetas dependen del identificador de la aplicación; hasta la
+    /// 0.1.0-beta.1 eran `com.tiktokobsconnector.desktop` y `com.tiktokobsconnector.app`.
+    pub fn migrate_from(&self, legacy_dirs: &[PathBuf]) -> Option<PathBuf> {
+        let path = self.path.as_ref()?;
+        if path.exists() {
+            return None;
+        }
+        for dir in legacy_dirs {
+            let old = dir.join("preferences.json");
+            let Ok(bytes) = std::fs::read(&old) else {
+                continue;
+            };
+            // Solo se migra si el contenido es válido.
+            let Ok(prefs) = serde_json::from_slice::<Preferences>(&bytes) else {
+                continue;
+            };
+            if self.save(&prefs).is_ok() {
+                return Some(dir.clone());
+            }
+        }
+        None
+    }
+
     pub fn save(&self, prefs: &Preferences) -> std::io::Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -106,6 +132,38 @@ mod tests {
             assert!(!raw.contains(forbidden), "no debe contener {forbidden}");
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn migrates_preferences_from_legacy_folder_once() {
+        let base = temp_dir("migr");
+        let legacy = base.join("com.tiktokobsconnector.desktop");
+        let current = base.join("com.virelo.desktop");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let old = Preferences {
+            remember_session: true,
+            last_title: "Mi directo".into(),
+            ..Default::default()
+        };
+        PreferencesStore::new(Some(legacy.clone()))
+            .save(&old)
+            .unwrap();
+        let store = PreferencesStore::new(Some(current.clone()));
+        let missing = base.join("com.tiktokobsconnector.app");
+        assert_eq!(
+            store.migrate_from(&[missing, legacy.clone()]),
+            Some(legacy.clone())
+        );
+        assert_eq!(store.load(), old);
+        // Una vez migrado no se vuelve a sobrescribir.
+        let newer = Preferences {
+            last_title: "Nuevo".into(),
+            ..old.clone()
+        };
+        store.save(&newer).unwrap();
+        assert_eq!(store.migrate_from(&[legacy]), None);
+        assert_eq!(store.load(), newer);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

@@ -38,7 +38,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <h1>TikTok OBS Connector</h1>
+        <h1>Virelo</h1>
         {auth.status === "signedIn" ? (
           <Badge tone="ok">Sesión iniciada</Badge>
         ) : auth.status === "pending" ? (
@@ -60,7 +60,7 @@ export default function App() {
       </main>
 
       <footer>
-        <span>No afiliado a TikTok ni a Streamlabs.</span>
+        <span>Virelo no está afiliado a TikTok, OBS Project ni Streamlabs.</span>
         <button
           type="button"
           className="link"
